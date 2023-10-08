@@ -27,17 +27,17 @@ fi
 "${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release
 "${CARGO}" run --example preemptive --release --features preemptive-schedule
 
-# test open-coroutine-iouring mod
 if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ]; then
+    # test open-coroutine-iouring mod
     cd "${PROJECT_DIR}"/open-coroutine-iouring
     "${CARGO}" test --target "${TARGET}" --no-default-features
     "${CARGO}" test --target "${TARGET}" --no-default-features --release
-fi
 
-# test open-coroutine mod
-cd "${PROJECT_DIR}"/open-coroutine
-"${CARGO}" test --target "${TARGET}" --no-default-features
-"${CARGO}" test --target "${TARGET}" --no-default-features --release
+    # test open-coroutine mod
+    cd "${PROJECT_DIR}"/open-coroutine
+    "${CARGO}" test --target "${TARGET}" --no-default-features
+    "${CARGO}" test --target "${TARGET}" --no-default-features --release
+fi
 
 # test examples
 cd "${PROJECT_DIR}"/examples
