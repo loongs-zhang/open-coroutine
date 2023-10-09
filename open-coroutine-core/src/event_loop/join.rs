@@ -74,7 +74,10 @@ impl JoinHandle {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(
+    test,
+    any(target_arch = "aarch64", target_arch = "x86_64", target_arch = "i686")
+))]
 mod tests {
     use super::*;
     use std::sync::{Arc, Condvar, Mutex};
