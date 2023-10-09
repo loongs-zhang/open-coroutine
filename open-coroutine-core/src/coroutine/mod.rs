@@ -1,17 +1,32 @@
+use crate::coroutine::constants::{CoroutineState, Syscall, SyscallState};
+use crate::coroutine::local::CoroutineLocal;
 use crate::coroutine::suspender::Suspender;
-use crate::scheduler::Scheduler;
-use corosensei::stack::DefaultStack;
-use corosensei::{CoroutineResult, ScopedCoroutine};
-use dashmap::DashMap;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::fmt::{Debug, Display, Formatter};
-use std::mem::{ManuallyDrop, MaybeUninit};
+use std::fmt::Debug;
+use std::panic::UnwindSafe;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// Constants.
+pub mod constants;
+
+/// Coroutine local abstraction.
+pub mod local;
+
+/// Coroutine suspender abstraction.
 pub mod suspender;
 
-#[allow(clippy::pedantic)]
+#[cfg(feature = "korosensei")]
+pub use korosensei::CoroutineImpl;
+#[allow(missing_docs)]
+#[cfg(feature = "korosensei")]
+mod korosensei;
+
+#[cfg(all(feature = "boost", not(feature = "korosensei")))]
+mod boost;
+
+#[allow(clippy::pedantic, missing_docs)]
 pub fn page_size() -> usize {
     static PAGE_SIZE: AtomicUsize = AtomicUsize::new(0);
     let mut ret = PAGE_SIZE.load(Ordering::Relaxed);
@@ -32,350 +47,203 @@ pub fn page_size() -> usize {
     ret
 }
 
-#[must_use]
-pub fn default_stack_size() -> usize {
-    //min stack size for backtrace
-    64 * 1024
+/// min stack size for backtrace
+pub const DEFAULT_STACK_SIZE: usize = 64 * 1024;
+
+/// Give the object a name.
+pub trait Named {
+    /// Get the name of this object.
+    fn get_name(&self) -> &str;
 }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum CoroutineState {
-    ///协程被创建
-    Created,
-    ///等待运行
-    Ready,
-    ///运行中
-    Running,
-    ///被挂起到指定时间后继续执行，参数为时间戳
-    Suspend(u64),
-    ///执行系统调用，参数为系统调用名
-    SystemCall(&'static str),
-    ///栈扩/缩容时
-    CopyStack,
-    ///执行用户函数完成
-    Finished,
-}
-
-impl Display for CoroutineState {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        Debug::fmt(self, f)
-    }
-}
-
-#[repr(C)]
-pub struct Coroutine<'c, Param, Yield, Return> {
-    name: &'c str,
-    sp: ScopedCoroutine<'c, Param, Yield, Return, DefaultStack>,
-    state: Cell<CoroutineState>,
-    context: DashMap<&'c str, *mut c_void>,
-    yields: MaybeUninit<ManuallyDrop<Yield>>,
-    //调用用户函数的返回值
-    result: MaybeUninit<ManuallyDrop<Return>>,
-    scheduler: Option<*const Scheduler>,
-}
-
-impl<'c, Param, Yield, Return> Drop for Coroutine<'c, Param, Yield, Return> {
-    fn drop(&mut self) {
-        //for test_yield case
-        if self.sp.started() && !self.sp.done() {
-            unsafe { self.sp.force_reset() };
-        }
-    }
-}
-
-unsafe impl<'c, Param, Yield, Return> Send for Coroutine<'c, Param, Yield, Return> {}
-
-#[macro_export]
-macro_rules! co {
-    ($f:expr, $size:expr $(,)?) => {
-        $crate::coroutine::Coroutine::new(Box::from(uuid::Uuid::new_v4().to_string()), $f, $size)
-            .expect("create coroutine failed !")
-    };
-    ($f:expr $(,)?) => {
-        $crate::coroutine::Coroutine::new(
-            Box::from(uuid::Uuid::new_v4().to_string()),
-            $f,
-            $crate::coroutine::default_stack_size(),
-        )
-        .expect("create coroutine failed !")
-    };
-    ($name:literal, $f:expr, $size:expr $(,)?) => {
-        $crate::coroutine::Coroutine::new(Box::from($name), $f, $size)
-            .expect("create coroutine failed !")
-    };
-    ($name:literal, $f:expr $(,)?) => {
-        $crate::coroutine::Coroutine::new(
-            Box::from($name),
-            $f,
-            $crate::coroutine::default_stack_size(),
-        )
-        .expect("create coroutine failed !")
-    };
-}
-
-thread_local! {
-    static COROUTINE: RefCell<*const c_void> = RefCell::new(std::ptr::null());
-}
-
-impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
-    pub fn new<F>(name: Box<str>, f: F, size: usize) -> std::io::Result<Self>
+/// A trait implemented for which needs `current()`.
+pub trait Current<'c> {
+    /// Init the current.
+    fn init_current(current: &Self)
     where
-        F: FnOnce(&Suspender<Param, Yield>, Param) -> Return,
-        F: 'c,
-    {
-        let stack = DefaultStack::new(size.max(page_size()))?;
-        let sp = ScopedCoroutine::with_stack(stack, |y, p| {
-            let suspender = Suspender::new(y);
-            Suspender::<Param, Yield>::init_current(&suspender);
-            let r = f(&suspender, p);
-            Suspender::<Param, Yield>::clean_current();
-            r
-        });
-        Ok(Coroutine {
-            name: Box::leak(name),
-            sp,
-            state: Cell::new(CoroutineState::Created),
-            context: DashMap::new(),
-            yields: MaybeUninit::uninit(),
-            result: MaybeUninit::uninit(),
-            scheduler: None,
-        })
-    }
+        Self: Sized;
 
-    #[allow(clippy::ptr_as_ptr)]
-    fn init_current(coroutine: &Coroutine<'c, Param, Yield, Return>) {
-        COROUTINE.with(|c| {
-            _ = c.replace(coroutine as *const _ as *const c_void);
-        });
-    }
+    /// Get the current if has.
+    fn current() -> Option<&'c Self>
+    where
+        Self: Sized;
 
-    #[must_use]
-    pub fn current() -> Option<&'c Coroutine<'c, Param, Yield, Return>> {
-        COROUTINE.with(|boxed| {
-            let ptr = *boxed
-                .try_borrow_mut()
-                .expect("coroutine current already borrowed");
-            if ptr.is_null() {
-                None
-            } else {
-                Some(unsafe { &*(ptr).cast::<Coroutine<'c, Param, Yield, Return>>() })
-            }
-        })
-    }
-
-    fn clean_current() {
-        COROUTINE.with(|boxed| {
-            *boxed
-                .try_borrow_mut()
-                .expect("coroutine current already borrowed") = std::ptr::null();
-        });
-    }
-
-    pub fn get_name(&self) -> &str {
-        self.name
-    }
-
-    pub fn put<V>(&self, key: &'c str, val: V) -> Option<V> {
-        let v = Box::leak(Box::new(val));
-        self.context
-            .insert(key, (v as *mut V).cast::<c_void>())
-            .map(|ptr| unsafe { *Box::from_raw(ptr.cast::<V>()) })
-    }
-
-    pub fn get<V>(&self, key: &'c str) -> Option<&V> {
-        self.context
-            .get(key)
-            .map(|ptr| unsafe { &*ptr.cast::<V>() })
-    }
-
-    pub fn get_mut<V>(&self, key: &'c str) -> Option<&mut V> {
-        self.context
-            .get(key)
-            .map(|ptr| unsafe { &mut *ptr.cast::<V>() })
-    }
-
-    pub fn remove<V>(&self, key: &'c str) -> Option<V> {
-        self.context
-            .remove(key)
-            .map(|ptr| unsafe { *Box::from_raw(ptr.1.cast::<V>()) })
-    }
-
-    pub fn get_state(&self) -> CoroutineState {
-        self.state.get()
-    }
-
-    pub fn set_state(&self, state: CoroutineState) -> CoroutineState {
-        let old = self.state.replace(state);
-        crate::info!("co {} change state {}->{}", self.get_name(), old, state);
-        old
-    }
-
-    pub fn is_finished(&self) -> bool {
-        self.get_state() == CoroutineState::Finished
-    }
-
-    pub fn get_result(&self) -> Option<Return> {
-        if self.is_finished() {
-            unsafe {
-                let mut m = self.result.assume_init_read();
-                Some(ManuallyDrop::take(&mut m))
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn get_yield(&self) -> Option<Yield> {
-        match self.get_state() {
-            CoroutineState::SystemCall(_) | CoroutineState::Suspend(_) => unsafe {
-                let mut m = self.yields.assume_init_read();
-                Some(ManuallyDrop::take(&mut m))
-            },
-            _ => None,
-        }
-    }
-
-    pub fn get_scheduler(&self) -> Option<*const Scheduler> {
-        self.scheduler
-    }
-
-    pub(crate) fn set_scheduler(&mut self, scheduler: &Scheduler) -> Option<*const Scheduler> {
-        self.scheduler.replace(scheduler)
-    }
-
-    pub fn resume_with(&mut self, arg: Param) -> CoroutineState {
-        let mut current = self.get_state();
-        match current {
-            CoroutineState::Finished => {
-                return CoroutineState::Finished;
-            }
-            CoroutineState::SystemCall(_) => {}
-            CoroutineState::Created | CoroutineState::Ready | CoroutineState::Suspend(0) => {
-                current = CoroutineState::Running;
-                _ = self.set_state(current);
-            }
-            _ => panic!("{} unexpected state {current}", self.get_name()),
-        };
-        Coroutine::<Param, Yield, Return>::init_current(self);
-        let state = match self.sp.resume(arg) {
-            CoroutineResult::Return(r) => {
-                self.result = MaybeUninit::new(ManuallyDrop::new(r));
-                let state = CoroutineState::Finished;
-                assert_eq!(CoroutineState::Running, self.set_state(state));
-                state
-            }
-            CoroutineResult::Yield(y) => {
-                self.yields = MaybeUninit::new(ManuallyDrop::new(y));
-                let mut current = self.get_state();
-                match current {
-                    CoroutineState::Running => {
-                        let syscall_name = Suspender::<Yield, Param>::syscall_name();
-                        if syscall_name.is_empty() {
-                            current =
-                                CoroutineState::Suspend(Suspender::<Yield, Param>::timestamp());
-                        } else {
-                            current = CoroutineState::SystemCall(syscall_name);
-                        }
-                        assert_eq!(CoroutineState::Running, self.set_state(current));
-                        current
-                    }
-                    CoroutineState::SystemCall(syscall_name) => {
-                        CoroutineState::SystemCall(syscall_name)
-                    }
-                    _ => panic!("{} unexpected state {current}", self.get_name()),
-                }
-            }
-        };
-        Coroutine::<Param, Yield, Return>::clean_current();
-        state
-    }
+    /// clean the current.
+    fn clean_current()
+    where
+        Self: Sized;
 }
 
-impl<'c, Yield, Return> Coroutine<'c, (), Yield, Return> {
-    pub fn resume(&mut self) -> CoroutineState {
+/// A trait implemented for coroutines.
+pub trait Coroutine<'c>: Debug + Eq + PartialEq + Ord + PartialOrd + Named + Current<'c> {
+    /// The type of value this coroutine accepts as a resume argument.
+    type Resume: UnwindSafe;
+
+    /// The type of value this coroutine yields.
+    type Yield: Copy + Eq + PartialEq + UnwindSafe;
+
+    /// The type of value this coroutine returns upon completion.
+    type Return: Copy + Eq + PartialEq + UnwindSafe;
+
+    /// Create a new coroutine.
+    ///
+    ///# Errors
+    /// if stack allocate failed.
+    fn new<F>(name: String, f: F, stack_size: usize) -> std::io::Result<Self>
+    where
+        F: FnOnce(
+            &dyn Suspender<Resume = Self::Resume, Yield = Self::Yield>,
+            Self::Resume,
+        ) -> Self::Return,
+        F: UnwindSafe,
+        F: 'c,
+        Self: Sized;
+
+    /// Resumes the execution of this coroutine.
+    ///
+    /// The argument will be passed into the coroutine as a resume argument.
+    ///
+    /// # Errors
+    /// if current coroutine state is unexpected.
+    fn resume_with(
+        &mut self,
+        arg: Self::Resume,
+    ) -> std::io::Result<CoroutineState<Self::Yield, Self::Return>>;
+
+    /// put/get some custom data to it.
+    fn local(&self) -> &CoroutineLocal<'c>;
+}
+
+/// A trait implemented for describing changes in the state of the coroutine.
+pub trait StateMachine<'c>: Coroutine<'c> {
+    /// Returns the current state of this `StateMachine`.
+    fn state(&self) -> CoroutineState<Self::Yield, Self::Return>;
+
+    /// created -> ready
+    /// syscall -> ready
+    /// suspend -> ready
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn ready(&self) -> std::io::Result<()>;
+
+    /// created -> running
+    /// ready -> running
+    /// suspend -> running
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn running(&self) -> std::io::Result<()>;
+
+    /// running -> suspend
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn suspend(&self, val: Self::Yield, timestamp: u64) -> std::io::Result<()>;
+
+    /// running -> syscall
+    /// inner: syscall -> syscall
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn syscall(
+        &self,
+        val: Self::Yield,
+        syscall: Syscall,
+        syscall_state: SyscallState,
+    ) -> std::io::Result<()>;
+
+    /// syscall -> running
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn syscall_resume(&self) -> std::io::Result<()>;
+
+    /// running -> complete
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn complete(&self, val: Self::Return) -> std::io::Result<()>;
+
+    /// running -> error
+    ///
+    /// # Errors
+    /// if change state fails.
+    fn error(&self, val: &'static str) -> std::io::Result<()>;
+}
+
+/// A trait implemented for coroutines when Resume is ().
+pub trait SimpleCoroutine<'c>: Coroutine<'c, Resume = ()> {
+    /// Resumes the execution of this coroutine.
+    ///
+    /// # Errors
+    /// see `resume_with`
+    fn resume(&mut self) -> std::io::Result<CoroutineState<Self::Yield, Self::Return>>;
+}
+
+impl<'c, SimpleCoroutineImpl: Coroutine<'c, Resume = ()>> SimpleCoroutine<'c>
+    for SimpleCoroutineImpl
+{
+    fn resume(&mut self) -> std::io::Result<CoroutineState<Self::Yield, Self::Return>> {
         self.resume_with(())
     }
 }
 
-impl<'c, Param, Yield, Return> Debug for Coroutine<'c, Param, Yield, Return> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Coroutine")
-            .field("name", &self.name)
-            .field("status", &self.state)
-            .field("context", &self.context)
-            .field("scheduler", &self.scheduler)
-            .finish()
-    }
+/// Create a new coroutine.
+#[macro_export]
+macro_rules! co {
+    ($f:expr, $size:literal $(,)?) => {
+        $crate::coroutine::CoroutineImpl::new(uuid::Uuid::new_v4().to_string(), $f, $size)
+            .expect("create coroutine failed !")
+    };
+    ($f:expr $(,)?) => {
+        $crate::coroutine::CoroutineImpl::new(
+            uuid::Uuid::new_v4().to_string(),
+            $f,
+            $crate::coroutine::DEFAULT_STACK_SIZE,
+        )
+        .expect("create coroutine failed !")
+    };
+    ($name:expr, $f:expr, $size:expr $(,)?) => {
+        $crate::coroutine::CoroutineImpl::new($name, $f, $size).expect("create coroutine failed !")
+    };
+    ($name:expr, $f:expr $(,)?) => {
+        $crate::coroutine::CoroutineImpl::new($name, $f, $crate::coroutine::DEFAULT_STACK_SIZE)
+            .expect("create coroutine failed !")
+    };
 }
 
-impl<'c, Param, Yield, Return> Eq for Coroutine<'c, Param, Yield, Return> {}
-
-impl<'c, Param, Yield, Return> PartialEq<Self> for Coroutine<'c, Param, Yield, Return> {
-    fn eq(&self, other: &Self) -> bool {
-        self.name.eq(other.name)
-    }
-}
-
-impl<'c, Param, Yield, Return> PartialOrd<Self> for Coroutine<'c, Param, Yield, Return> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<'c, Param, Yield, Return> Ord for Coroutine<'c, Param, Yield, Return> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name.cmp(other.name)
-    }
+thread_local! {
+    pub(crate) static COROUTINE: RefCell<VecDeque<*const c_void>> = RefCell::new(VecDeque::new());
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::unbreakable;
 
     #[test]
     fn test_return() {
-        let mut coroutine = co!(|_s: &Suspender<'_, i32, ()>, param| {
+        let mut coroutine = co!(|_: &dyn Suspender<'_, Yield = (), Resume = i32>, param| {
             assert_eq!(0, param);
             1
         });
-        assert_eq!(CoroutineState::Finished, coroutine.resume_with(0));
-        assert_eq!(Some(1), coroutine.get_result());
+        assert_eq!(
+            CoroutineState::Complete(1),
+            coroutine.resume_with(0).unwrap()
+        );
     }
 
     #[test]
     fn test_yield_once() {
-        let mut coroutine = co!(|suspender, param| {
+        let mut coroutine = co!(|suspender: &dyn Suspender<'_, Resume = i32, Yield = i32>,
+                                 param| {
             assert_eq!(1, param);
             _ = suspender.suspend_with(2);
         });
-        assert_eq!(CoroutineState::Suspend(0), coroutine.resume_with(1));
-        assert_eq!(Some(2), coroutine.get_yield());
-    }
-
-    #[test]
-    fn test_syscall() {
-        let mut coroutine = co!(|suspender, param| {
-            assert_eq!(1, param);
-            unbreakable!(
-                {
-                    assert_eq!(3, suspender.suspend_with(2));
-                    assert_eq!(5, suspender.suspend_with(4));
-                },
-                "read"
-            );
-            if let Some(co) = Coroutine::<i32, i32, i32>::current() {
-                assert_eq!(CoroutineState::Running, co.get_state());
-            }
-            6
-        });
-        assert_eq!(CoroutineState::SystemCall("read"), coroutine.resume_with(1));
-        assert_eq!(Some(2), coroutine.get_yield());
-        assert_eq!(CoroutineState::SystemCall("read"), coroutine.resume_with(3));
-        assert_eq!(Some(4), coroutine.get_yield());
-        assert_eq!(CoroutineState::Finished, coroutine.resume_with(5));
-        assert_eq!(Some(6), coroutine.get_result());
+        assert_eq!(
+            CoroutineState::Suspend(2, 0),
+            coroutine.resume_with(1).unwrap()
+        );
     }
 
     #[test]
@@ -386,24 +254,79 @@ mod tests {
             assert_eq!(5, suspender.suspend_with(4));
             6
         });
-        assert_eq!(CoroutineState::Suspend(0), coroutine.resume_with(1));
-        assert_eq!(Some(2), coroutine.get_yield());
-        assert_eq!(CoroutineState::Suspend(0), coroutine.resume_with(3));
-        assert_eq!(Some(4), coroutine.get_yield());
-        assert_eq!(CoroutineState::Finished, coroutine.resume_with(5));
-        assert_eq!(Some(6), coroutine.get_result());
+        assert_eq!(
+            CoroutineState::Suspend(2, 0),
+            coroutine.resume_with(1).unwrap()
+        );
+        assert_eq!(
+            CoroutineState::Suspend(4, 0),
+            coroutine.resume_with(3).unwrap()
+        );
+        assert_eq!(
+            CoroutineState::Complete(6),
+            coroutine.resume_with(5).unwrap()
+        );
     }
 
     #[test]
     fn test_current() {
-        assert!(Coroutine::<i32, i32, i32>::current().is_none());
-        let mut coroutine = co!(|_: &Suspender<'_, i32, i32>, input| {
-            assert_eq!(0, input);
-            assert!(Coroutine::<i32, i32, i32>::current().is_some());
-            1
-        });
-        assert_eq!(CoroutineState::Finished, coroutine.resume_with(0));
-        assert_eq!(Some(1), coroutine.get_result());
+        assert!(CoroutineImpl::<i32, i32, i32>::current().is_none());
+        let parent_name = "parent";
+        let mut parent = co!(
+            String::from(parent_name),
+            |_: &dyn Suspender<'_, Resume = i32, Yield = i32>, input| {
+                assert_eq!(0, input);
+                assert_eq!(
+                    parent_name,
+                    CoroutineImpl::<i32, i32, i32>::current()
+                        .unwrap()
+                        .get_name()
+                );
+                assert_eq!(
+                    parent_name,
+                    CoroutineImpl::<i32, i32, i32>::current()
+                        .unwrap()
+                        .get_name()
+                );
+
+                let child_name = "child";
+                let mut child = co!(
+                    String::from(child_name),
+                    |_: &dyn Suspender<'_, Resume = i32, Yield = i32>, input| {
+                        assert_eq!(0, input);
+                        assert_eq!(
+                            child_name,
+                            CoroutineImpl::<i32, i32, i32>::current()
+                                .unwrap()
+                                .get_name()
+                        );
+                        assert_eq!(
+                            child_name,
+                            CoroutineImpl::<i32, i32, i32>::current()
+                                .unwrap()
+                                .get_name()
+                        );
+                        1
+                    }
+                );
+                assert_eq!(CoroutineState::Complete(1), child.resume_with(0).unwrap());
+
+                assert_eq!(
+                    parent_name,
+                    CoroutineImpl::<i32, i32, i32>::current()
+                        .unwrap()
+                        .get_name()
+                );
+                assert_eq!(
+                    parent_name,
+                    CoroutineImpl::<i32, i32, i32>::current()
+                        .unwrap()
+                        .get_name()
+                );
+                1
+            }
+        );
+        assert_eq!(CoroutineState::Complete(1), parent.resume_with(0).unwrap());
     }
 
     #[test]
@@ -415,24 +338,79 @@ mod tests {
             println!("{:?}", backtrace::Backtrace::new());
             4
         });
-        assert_eq!(CoroutineState::Suspend(0), coroutine.resume_with(1));
-        assert_eq!(Some(2), coroutine.get_yield());
-        assert_eq!(CoroutineState::Finished, coroutine.resume_with(3));
-        assert_eq!(Some(4), coroutine.get_result());
+        assert_eq!(
+            CoroutineState::Suspend(2, 0),
+            coroutine.resume_with(1).unwrap()
+        );
+        assert_eq!(
+            CoroutineState::Complete(4),
+            coroutine.resume_with(3).unwrap()
+        );
     }
 
     #[test]
     fn test_context() {
-        let mut coroutine = co!(|_: &Suspender<'_, (), ()>, ()| {
-            let current = Coroutine::<(), (), ()>::current().unwrap();
-            assert_eq!(2, *current.get("1").unwrap());
-            *current.get_mut("1").unwrap() = 3;
+        let mut coroutine = co!(|_: &dyn Suspender<'_, Resume = (), Yield = ()>, ()| {
+            let current = CoroutineImpl::<(), (), ()>::current().unwrap();
+            assert_eq!(2, *current.local().get("1").unwrap());
+            *current.local().get_mut("1").unwrap() = 3;
             ()
         });
-        assert!(coroutine.put("1", 1).is_none());
-        assert_eq!(Some(1), coroutine.put("1", 2));
-        assert_eq!(CoroutineState::Finished, coroutine.resume());
-        assert_eq!(Some(()), coroutine.get_result());
-        assert_eq!(Some(3), coroutine.remove("1"));
+        assert!(coroutine.local().put("1", 1).is_none());
+        assert_eq!(Some(1), coroutine.local().put("1", 2));
+        assert_eq!(CoroutineState::Complete(()), coroutine.resume().unwrap());
+        assert_eq!(Some(3), coroutine.local().remove("1"));
+    }
+
+    #[test]
+    fn test_panic() {
+        let mut coroutine = co!(|_: &dyn Suspender<'_, Yield = (), Resume = ()>, ()| {
+            panic!("test panic, just ignore it");
+        });
+        let result = coroutine.resume();
+        assert!(result.is_ok());
+        let error = match result.unwrap() {
+            CoroutineState::Error(_) => true,
+            _ => false,
+        };
+        assert!(error);
+    }
+
+    #[test]
+    fn test_trap() {
+        let mut coroutine = co!(|_: &dyn Suspender<'_, Yield = (), Resume = ()>, ()| {
+            println!("Before trap");
+            unsafe { std::ptr::write_volatile(1 as *mut u8, 0) };
+            println!("After trap");
+        });
+        let result = coroutine.resume();
+        assert!(result.is_ok());
+        let error = match result.unwrap() {
+            CoroutineState::Error(_) => true,
+            _ => false,
+        };
+        assert!(error);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn test_invalid_memory_reference() {
+        let mut coroutine = co!(|_: &dyn Suspender<'_, Yield = (), Resume = ()>, ()| {
+            println!("Before invalid memory reference");
+            // 没有加--release运行，会收到SIGABRT信号，不好处理，直接禁用测试
+            unsafe {
+                let co = &*((1usize as *mut c_void).cast::<CoroutineImpl<(), (), ()>>());
+                println!("{}", co.state());
+            }
+            println!("After invalid memory reference");
+        });
+        let result = coroutine.resume();
+        assert!(result.is_ok());
+        println!("{:?}", result);
+        let error = match result.unwrap() {
+            CoroutineState::Error(_) => true,
+            _ => false,
+        };
+        assert!(error);
     }
 }

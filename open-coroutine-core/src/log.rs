@@ -1,26 +1,28 @@
+/// init log framework.
+#[allow(box_pointers)]
 #[cfg(feature = "logs")]
-pub static LOG: std::sync::Once = std::sync::Once::new();
-
-#[macro_export]
-macro_rules! init_log {
-    () => {
-        $crate::log::LOG.call_once(|| {
-            let mut builder = simplelog::ConfigBuilder::new();
-            let result = builder.set_time_format_rfc2822().set_time_offset_to_local();
-            let config = if let Ok(builder) = result {
-                builder
-            } else {
-                result.unwrap_err()
-            }
-            .build();
-            _ = simplelog::CombinedLogger::init(vec![simplelog::TermLogger::new(
-                log::LevelFilter::Info,
-                config,
-                simplelog::TerminalMode::Mixed,
-                simplelog::ColorChoice::Auto,
-            )]);
-        });
-    };
+pub fn init() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static LOG_INITED: AtomicBool = AtomicBool::new(false);
+    if LOG_INITED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        let mut builder = simplelog::ConfigBuilder::new();
+        let result = builder.set_time_format_rfc2822().set_time_offset_to_local();
+        let config = if let Ok(builder) = result {
+            builder
+        } else {
+            result.unwrap_err()
+        }
+        .build();
+        _ = simplelog::CombinedLogger::init(vec![simplelog::TermLogger::new(
+            log::LevelFilter::Info,
+            config,
+            simplelog::TerminalMode::Mixed,
+            simplelog::ColorChoice::Auto,
+        )]);
+    }
 }
 
 #[macro_export]
@@ -30,8 +32,8 @@ macro_rules! info {
     (target: $target:expr, $($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(target: $target, log::Level::Info, $($arg)+)
+                $crate::log::init();
+                log::info!(target: $target, $($arg)+)
             }
         }
     };
@@ -40,8 +42,8 @@ macro_rules! info {
     ($($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(log::Level::Info, $($arg)+)
+                $crate::log::init();
+                log::info!($($arg)+)
             }
         }
     }
@@ -54,8 +56,8 @@ macro_rules! warn {
     (target: $target:expr, $($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(target: $target, log::Level::Warn, $($arg)+)
+                 $crate::log::init();
+                log::warn!(target: $target, $($arg)+)
             }
         }
     };
@@ -64,8 +66,8 @@ macro_rules! warn {
     ($($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(log::Level::Warn, $($arg)+)
+               $crate::log::init();
+                log::warn!($($arg)+)
             }
         }
     }
@@ -78,8 +80,8 @@ macro_rules! error {
     (target: $target:expr, $($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(target: $target, log::Level::Error, $($arg)+)
+                 $crate::log::init();
+                log::error!(target: $target, $($arg)+)
             }
         }
 
@@ -89,8 +91,8 @@ macro_rules! error {
     ($($arg:tt)+) => {
         cfg_if::cfg_if! {
             if #[cfg(feature = "logs")] {
-                $crate::init_log!();
-                log::log!(log::Level::Error, $($arg)+)
+                 $crate::log::init();
+                log::error!($($arg)+)
             }
         }
 

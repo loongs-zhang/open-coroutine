@@ -1,37 +1,123 @@
-use crate::coroutine::suspender::Suspender;
+use crate::coroutine::Named;
+use std::cell::Cell;
 use std::fmt::{Debug, Formatter};
+use std::panic::UnwindSafe;
 
-#[repr(C)]
-#[allow(clippy::type_complexity)]
-pub struct Task<'t> {
-    name: &'t str,
-    func: Box<dyn FnOnce(&Suspender<(), ()>, ()) -> usize>,
+/// A trait implemented for describing task.
+/// Note: the param and the result is raw pointer.
+pub trait Task<'t>: Named + UnwindSafe {
+    /// Create a new `Task` instance.
+    fn new(
+        name: String,
+        func: impl FnOnce(Option<usize>) -> Option<usize> + UnwindSafe + 't,
+        param: Option<usize>,
+    ) -> Self;
+
+    /// Set a param for this task.
+    fn set_param(&self, param: usize) -> Option<usize>;
+
+    /// Get param from this task.
+    fn get_param(&self) -> Option<usize>;
+
+    /// exec the task
+    ///
+    /// # Errors
+    /// if an exception occurred while executing this task.
+    fn run<'e>(self) -> (String, Result<Option<usize>, &'e str>);
 }
 
-impl<'t> Task<'t> {
-    pub fn new(
-        name: Box<str>,
-        func: impl FnOnce(&Suspender<'_, (), ()>, ()) -> usize + 'static,
+#[repr(C)]
+#[allow(clippy::type_complexity, box_pointers, missing_docs)]
+pub struct TaskImpl<'t> {
+    name: String,
+    func: Box<dyn FnOnce(Option<usize>) -> Option<usize> + UnwindSafe + 't>,
+    param: Cell<Option<usize>>,
+}
+
+impl UnwindSafe for TaskImpl<'_> {}
+
+impl Debug for TaskImpl<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Task")
+            .field("name", &self.name)
+            .field("param", &self.param)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Named for TaskImpl<'_> {
+    fn get_name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl<'t> Task<'t> for TaskImpl<'t> {
+    #[allow(box_pointers)]
+    fn new(
+        name: String,
+        func: impl FnOnce(Option<usize>) -> Option<usize> + UnwindSafe + 't,
+        param: Option<usize>,
     ) -> Self {
-        Task {
-            name: Box::leak(name),
+        TaskImpl {
+            name,
             func: Box::new(func),
+            param: Cell::new(param),
         }
     }
 
-    #[must_use]
-    pub fn get_name(&self) -> &'t str {
-        self.name
+    fn set_param(&self, param: usize) -> Option<usize> {
+        self.param.replace(Some(param))
     }
 
-    #[must_use]
-    pub fn run(self, suspender: &Suspender<'_, (), ()>) -> usize {
-        (self.func)(suspender, ())
+    fn get_param(&self) -> Option<usize> {
+        self.param.get()
+    }
+
+    #[allow(box_pointers)]
+    fn run<'e>(self) -> (String, Result<Option<usize>, &'e str>) {
+        let paran = self.get_param();
+        (
+            self.name.clone(),
+            std::panic::catch_unwind(|| (self.func)(paran)).map_err(|e| {
+                let message = *e
+                    .downcast_ref::<&'static str>()
+                    .unwrap_or(&"task failed without message");
+                crate::error!("task:{} finish with error:{}", self.name, message);
+                message
+            }),
+        )
     }
 }
 
-impl Debug for Task<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Task").field("name", &self.name).finish()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test() {
+        let task = TaskImpl::new(
+            String::from("test"),
+            |p| {
+                println!("hello");
+                p
+            },
+            None,
+        );
+        assert_eq!((String::from("test"), Ok(None)), task.run());
+    }
+
+    #[test]
+    fn test_panic() {
+        let task = TaskImpl::new(
+            String::from("test"),
+            |_| {
+                panic!("test panic, just ignore it");
+            },
+            None,
+        );
+        assert_eq!(
+            (String::from("test"), Err("test panic, just ignore it")),
+            task.run()
+        );
     }
 }

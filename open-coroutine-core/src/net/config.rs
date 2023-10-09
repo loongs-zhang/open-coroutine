@@ -44,6 +44,8 @@ impl Config {
         self.keep_alive_time.load()
     }
 
+    /// # Panics
+    /// if `event_loop_size<=1`
     pub fn set_event_loop_size(&self, event_loop_size: usize) -> &Self {
         assert!(
             event_loop_size > 1,
@@ -63,6 +65,8 @@ impl Config {
         self
     }
 
+    /// # Panics
+    /// if `max_size<=0` or `max_size<min_size`
     pub fn set_max_size(&self, max_size: usize) -> &Self {
         assert!(max_size > 0, "max_size must be greater than 0");
         assert!(
@@ -83,7 +87,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             event_loop_size: AtomicCell::new(num_cpus::get()),
-            stack_size: AtomicCell::new(crate::coroutine::default_stack_size()),
+            stack_size: AtomicCell::new(crate::coroutine::DEFAULT_STACK_SIZE),
             min_size: AtomicCell::new(0),
             max_size: AtomicCell::new(65536),
             keep_alive_time: AtomicCell::new(0),

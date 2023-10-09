@@ -1,116 +1,148 @@
-use corosensei::Yielder;
-use std::cell::RefCell;
+use crate::coroutine::Current;
+use std::cell::Cell;
 use std::ffi::c_void;
-use std::fmt::{Debug, Formatter};
+use std::panic::UnwindSafe;
 use std::time::Duration;
 
-#[repr(transparent)]
-pub struct Suspender<'s, Param, Yield>(&'s Yielder<Param, Yield>);
+/// A trait implemented for suspend the execution of the coroutine.
+pub trait Suspender<'s>: Current<'s> {
+    /// The type of value this coroutine accepts as a resume argument.
+    type Resume: UnwindSafe;
+
+    /// The type of value the coroutine yields.
+    type Yield: UnwindSafe;
+
+    /// Suspend the execution of the coroutine.
+    fn suspend_with(&self, arg: Self::Yield) -> Self::Resume;
+}
+
+/// A trait implemented for suspend the execution of the coroutine.
+pub trait SimpleSuspender<'s>: Suspender<'s, Yield = ()> {
+    /// Suspend the execution of the coroutine.
+    fn suspend(&self) -> Self::Resume;
+}
+
+impl<'s, SimpleSuspenderImpl: ?Sized + Suspender<'s, Yield = ()>> SimpleSuspender<'s>
+    for SimpleSuspenderImpl
+{
+    fn suspend(&self) -> Self::Resume {
+        self.suspend_with(())
+    }
+}
+
+/// A trait implemented for suspend the execution of the coroutine.
+pub trait DelaySuspender<'s>: Suspender<'s> {
+    /// Delay the execution of the coroutine.
+    fn delay_with(&self, arg: Self::Yield, delay: Duration) -> Self::Resume {
+        self.until_with(arg, open_coroutine_timer::get_timeout_time(delay))
+    }
+
+    /// Delay the execution of the coroutine.
+    fn until_with(&self, arg: Self::Yield, timestamp: u64) -> Self::Resume;
+
+    /// When can a coroutine be resumed.
+    fn timestamp() -> u64;
+}
 
 thread_local! {
-    static SUSPENDER: RefCell<*const c_void> = RefCell::new(std::ptr::null());
-    static TIMESTAMP: RefCell<u64> = RefCell::new(0);
-    static SYSCALL: RefCell<&'static str> = RefCell::new("");
+    static TIMESTAMP: Cell<u64> = Cell::new(0);
 }
 
-impl<'s, Param, Yield> Suspender<'s, Param, Yield> {
-    pub(crate) fn new(yielder: &'s Yielder<Param, Yield>) -> Self {
-        Suspender(yielder)
+impl<'s, DelaySuspenderImpl: ?Sized + Suspender<'s>> DelaySuspender<'s> for DelaySuspenderImpl {
+    fn until_with(&self, arg: Self::Yield, timestamp: u64) -> Self::Resume {
+        TIMESTAMP.with(|c| c.set(timestamp));
+        self.suspend_with(arg)
     }
 
-    #[allow(clippy::ptr_as_ptr)]
-    pub(crate) fn init_current(suspender: &Suspender<Param, Yield>) {
-        SUSPENDER.with(|c| {
-            _ = c.replace(suspender as *const _ as *const c_void);
-        });
-    }
-
-    #[must_use]
-    pub fn current() -> Option<&'s Suspender<'s, Param, Yield>> {
-        SUSPENDER.with(|boxed| {
-            let ptr = *boxed
-                .try_borrow_mut()
-                .expect("suspender current already borrowed");
-            if ptr.is_null() {
-                None
-            } else {
-                Some(unsafe { &*(ptr).cast::<Suspender<'s, Param, Yield>>() })
-            }
-        })
-    }
-
-    pub(crate) fn clean_current() {
-        SUSPENDER.with(|boxed| {
-            *boxed
-                .try_borrow_mut()
-                .expect("suspender current already borrowed") = std::ptr::null();
-        });
-    }
-
-    fn init_timestamp(time: u64) {
-        TIMESTAMP.with(|c| {
-            _ = c.replace(time);
-        });
-    }
-
-    pub(crate) fn timestamp() -> u64 {
-        TIMESTAMP.with(|boxed| boxed.replace(0))
-    }
-
-    fn init_syscall_name(syscall_name: &str) {
-        SYSCALL.with(|c| {
-            _ = c.replace(Box::leak(Box::from(syscall_name)));
-        });
-    }
-
-    pub(crate) fn syscall_name() -> &'static str {
-        SYSCALL.with(|boxed| boxed.replace(""))
-    }
-
-    pub fn suspend_with(&self, val: Yield) -> Param {
-        Suspender::<Param, Yield>::clean_current();
-        let param = self.0.suspend(val);
-        Suspender::<Param, Yield>::init_current(self);
-        param
-    }
-
-    pub fn until_with(&self, val: Yield, timestamp: u64) -> Param {
-        Suspender::<Param, Yield>::init_timestamp(timestamp);
-        self.suspend_with(val)
-    }
-
-    pub fn delay_with(&self, val: Yield, time: Duration) -> Param {
-        self.until_with(val, open_coroutine_timer::get_timeout_time(time))
-    }
-
-    //只有框架级crate才需要使用此方法
-    pub fn syscall_with(&self, val: Yield, syscall_name: &str) -> Param {
-        Suspender::<Param, Yield>::init_syscall_name(syscall_name);
-        self.suspend_with(val)
+    fn timestamp() -> u64 {
+        TIMESTAMP.with(Cell::take)
     }
 }
 
-impl<'s> Suspender<'s, (), ()> {
-    pub fn suspend(&self) {
-        self.suspend_with(());
+/// A trait implemented for suspend the execution of the coroutine.
+pub trait SimpleDelaySuspender<'s>: DelaySuspender<'s, Yield = ()> {
+    /// Delay the execution of the coroutine.
+    fn delay(&self, delay: Duration) -> Self::Resume;
+
+    /// Delay the execution of the coroutine.
+    fn until(&self, timestamp: u64) -> Self::Resume;
+}
+
+impl<'s, SimpleDelaySuspenderImpl: ?Sized + DelaySuspender<'s, Yield = ()>> SimpleDelaySuspender<'s>
+    for SimpleDelaySuspenderImpl
+{
+    fn delay(&self, delay: Duration) -> Self::Resume {
+        self.delay_with((), delay)
     }
 
-    pub fn until(&self, timestamp: u64) {
-        self.until_with((), timestamp);
-    }
-
-    pub fn delay(&self, time: Duration) {
-        self.delay_with((), time);
-    }
-
-    //只有框架级crate才需要使用此方法
-    pub fn syscall(&self, syscall_name: &str) {
-        self.syscall_with((), syscall_name);
+    fn until(&self, timestamp: u64) -> Self::Resume {
+        self.until_with((), timestamp)
     }
 }
 
-impl<'s, Param, Yield> Debug for Suspender<'s, Param, Yield> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Suspender").finish()
+thread_local! {
+    pub(crate) static SUSPENDER: Cell<*const c_void> = Cell::new(std::ptr::null());
+}
+
+#[cfg(feature = "korosensei")]
+pub use korosensei::SuspenderImpl;
+#[allow(missing_docs, missing_debug_implementations)]
+#[cfg(feature = "korosensei")]
+mod korosensei {
+    use crate::coroutine::suspender::{Suspender, SUSPENDER};
+    use crate::coroutine::Current;
+    use corosensei::Yielder;
+    use std::ffi::c_void;
+    use std::panic::UnwindSafe;
+
+    pub struct SuspenderImpl<'s, Param, Yield>(pub(crate) &'s Yielder<Param, Yield>)
+    where
+        Param: UnwindSafe,
+        Yield: UnwindSafe;
+
+    impl<'s, Param, Yield> Current<'s> for SuspenderImpl<'s, Param, Yield>
+    where
+        Param: UnwindSafe,
+        Yield: UnwindSafe,
+    {
+        #[allow(clippy::ptr_as_ptr)]
+        fn init_current(current: &SuspenderImpl<'s, Param, Yield>) {
+            SUSPENDER.with(|c| c.set(current as *const _ as *const c_void));
+        }
+
+        fn current() -> Option<&'s Self> {
+            SUSPENDER.with(|boxed| {
+                let ptr = boxed.get();
+                if ptr.is_null() {
+                    None
+                } else {
+                    Some(unsafe { &*(ptr).cast::<SuspenderImpl<'s, Param, Yield>>() })
+                }
+            })
+        }
+
+        fn clean_current() {
+            SUSPENDER.with(|boxed| boxed.set(std::ptr::null()));
+        }
+    }
+
+    impl<'s, Param, Yield> Suspender<'s> for SuspenderImpl<'s, Param, Yield>
+    where
+        Param: UnwindSafe,
+        Yield: UnwindSafe,
+    {
+        type Resume = Param;
+        type Yield = Yield;
+
+        fn suspend_with(&self, arg: Self::Yield) -> Self::Resume {
+            Self::clean_current();
+            let param = self.0.suspend(arg);
+            Self::init_current(self);
+            param
+        }
     }
 }
+
+#[allow(missing_docs, missing_debug_implementations)]
+#[cfg(all(feature = "boost", not(feature = "corosensei")))]
+mod boost {}
