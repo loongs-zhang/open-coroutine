@@ -88,6 +88,7 @@ impl EventLoops {
                         std::thread::Builder::new()
                             .name(format!("open-coroutine-event-loop-{i}"))
                             .spawn(move || {
+                                #[cfg(not(target_os = "macos"))]
                                 assert!(
                                     core_affinity::set_for_current(core_affinity::CoreId { id: i }),
                                     "pin event loop thread to a single CPU core failed !"

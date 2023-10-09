@@ -1,29 +1,28 @@
 use crate::join::JoinHandle;
-use open_coroutine_core::coroutine::suspender::Suspender;
-use open_coroutine_core::event_loop::UserFunc;
 use std::ffi::c_void;
 
 #[allow(improper_ctypes)]
 extern "C" {
-    fn coroutine_crate(f: UserFunc, param: usize, stack_size: usize) -> JoinHandle;
+    fn coroutine_crate(
+        f: extern "C" fn(usize) -> usize,
+        param: usize,
+        stack_size: usize,
+    ) -> JoinHandle;
 }
 
-#[allow(dead_code)]
+#[allow(box_pointers)]
 pub fn co<F, P: 'static, R: 'static>(f: F, param: P, stack_size: usize) -> JoinHandle
 where
-    F: FnOnce(*const Suspender<(), ()>, P) -> R + Copy,
+    F: FnOnce(P) -> R + Copy,
 {
-    extern "C" fn co_main<F, P: 'static, R: 'static>(
-        suspender: *const Suspender<(), ()>,
-        input: usize,
-    ) -> usize
+    extern "C" fn co_main<F, P: 'static, R: 'static>(input: usize) -> usize
     where
-        F: FnOnce(*const Suspender<(), ()>, P) -> R + Copy,
+        F: FnOnce(P) -> R + Copy,
     {
         unsafe {
             let ptr = &mut *((input as *mut c_void).cast::<(F, P)>());
             let data = std::ptr::read_unaligned(ptr);
-            let result: &'static mut R = Box::leak(Box::new((data.0)(suspender, data.1)));
+            let result: &'static mut R = Box::leak(Box::new((data.0)(data.1)));
             (result as *mut R).cast::<c_void>() as usize
         }
     }
@@ -65,7 +64,7 @@ mod tests {
             .name("test_join".to_string())
             .spawn(move || {
                 let handler1 = co!(
-                    |_, input| {
+                    |input| {
                         println!("[coroutine1] launched with {}", input);
                         input
                     },
@@ -73,7 +72,7 @@ mod tests {
                     1024 * 1024,
                 );
                 let handler2 = co!(
-                    |_, input| {
+                    |input| {
                         println!("[coroutine2] launched with {}", input);
                         input
                     },
@@ -107,6 +106,7 @@ mod tests {
                 "join failed",
             ))
         } else {
+            #[allow(box_pointers)]
             handler.join().unwrap();
             Ok(())
         }

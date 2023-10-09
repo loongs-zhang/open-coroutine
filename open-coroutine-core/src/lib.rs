@@ -64,6 +64,39 @@ pub mod scheduler;
 /// Coroutine pool abstraction and impl.
 pub mod pool;
 
+#[allow(missing_docs)]
+#[macro_export]
+macro_rules! unbreakable {
+    ( $f: expr, $syscall:ident ) => {{
+        $crate::info!("{} hooked", $crate::coroutine::constants::Syscall::$syscall);
+        if let Some(coroutine) = SchedulableCoroutine::current() {
+            //协程进入系统调用状态
+            coroutine
+                .syscall(
+                    (),
+                    $crate::coroutine::constants::Syscall::$syscall,
+                    SyscallState::Computing,
+                )
+                .expect("change to syscall state failed !");
+        }
+        let r = $f;
+        if let Some(coroutine) = SchedulableCoroutine::current() {
+            //系统调用完成
+            coroutine
+                .syscall(
+                    (),
+                    $crate::coroutine::constants::Syscall::$syscall,
+                    SyscallState::Finished,
+                )
+                .expect("change to syscall Finished state failed !");
+            coroutine
+                .syscall_resume()
+                .expect("change to running state failed !");
+        }
+        return r;
+    }};
+}
+
 /// net abstraction and impl.
 #[allow(
     missing_docs,

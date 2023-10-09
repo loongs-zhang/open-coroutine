@@ -1,4 +1,4 @@
-use open_coroutine_core::event_loop::core::EventLoop;
+use open_coroutine_core::net::event_loop::EventLoopImpl;
 use std::cmp::Ordering;
 use std::ffi::c_char;
 use std::io::{Error, ErrorKind};
@@ -13,9 +13,11 @@ extern "C" {
 
 #[repr(C)]
 #[derive(Debug)]
-pub struct JoinHandle(*const EventLoop, *const c_char);
+pub struct JoinHandle(*const EventLoopImpl<'static>, *const c_char);
 
 impl JoinHandle {
+    /// # Errors
+    /// if join failed.
     #[allow(clippy::cast_possible_truncation)]
     pub fn timeout_join<R>(&self, dur: Duration) -> std::io::Result<Option<R>> {
         unsafe {
@@ -28,6 +30,8 @@ impl JoinHandle {
         }
     }
 
+    /// # Errors
+    /// if join failed.
     pub fn join<R>(self) -> std::io::Result<Option<R>> {
         unsafe {
             let ptr = coroutine_join(self);

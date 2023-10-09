@@ -1,5 +1,9 @@
 use libc::{c_int, iovec, msghdr, off_t, size_t, sockaddr, socklen_t, ssize_t};
 use once_cell::sync::Lazy;
+use open_coroutine_core::coroutine::constants::SyscallState;
+use open_coroutine_core::coroutine::Current;
+use open_coroutine_core::coroutine::StateMachine;
+use open_coroutine_core::scheduler::SchedulableCoroutine;
 use std::ffi::c_void;
 
 static RECV: Lazy<extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t> = init_hook!("recv");
@@ -8,19 +12,19 @@ static RECV: Lazy<extern "C" fn(c_int, *mut c_void, size_t, c_int) -> ssize_t> =
 pub extern "C" fn recv(socket: c_int, buf: *mut c_void, len: size_t, flags: c_int) -> ssize_t {
     open_coroutine_core::unbreakable!(
         {
-            #[cfg(target_os = "linux")]
-            if open_coroutine_iouring::version::support_io_uring() {
-                return open_coroutine_core::event_loop::EventLoops::recv(
-                    Some(Lazy::force(&RECV)),
-                    socket,
-                    buf,
-                    len,
-                    flags,
-                );
-            }
+            // #[cfg(target_os = "linux")]
+            // if open_coroutine_iouring::version::support_io_uring() {
+            //     return open_coroutine_core::net::EventLoops::recv(
+            //         Some(Lazy::force(&RECV)),
+            //         socket,
+            //         buf,
+            //         len,
+            //         flags,
+            //     );
+            // }
             impl_expected_read_hook!((Lazy::force(&RECV))(socket, buf, len, flags))
         },
-        "recv"
+        recv
     )
 }
 
@@ -41,7 +45,7 @@ pub extern "C" fn recvfrom(
         impl_expected_read_hook!((Lazy::force(&RECVFROM))(
             socket, buf, len, flags, addr, addrlen
         )),
-        "recvfrom"
+        recvfrom
     )
 }
 
@@ -52,7 +56,7 @@ static PREAD: Lazy<extern "C" fn(c_int, *mut c_void, size_t, off_t) -> ssize_t> 
 pub extern "C" fn pread(fd: c_int, buf: *mut c_void, count: size_t, offset: off_t) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_read_hook!((Lazy::force(&PREAD))(fd, buf, count, offset)),
-        "pread"
+        pread
     )
 }
 
@@ -62,7 +66,7 @@ static READV: Lazy<extern "C" fn(c_int, *const iovec, c_int) -> ssize_t> = init_
 pub extern "C" fn readv(fd: c_int, iov: *const iovec, iovcnt: c_int) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_batch_read_hook!((Lazy::force(&READV))(fd, iov, iovcnt,)),
-        "readv"
+        readv
     )
 }
 
@@ -73,7 +77,7 @@ static PREADV: Lazy<extern "C" fn(c_int, *const iovec, c_int, off_t) -> ssize_t>
 pub extern "C" fn preadv(fd: c_int, iov: *const iovec, iovcnt: c_int, offset: off_t) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_batch_read_hook!((Lazy::force(&PREADV))(fd, iov, iovcnt, offset)),
-        "preadv"
+        preadv
     )
 }
 
@@ -167,7 +171,7 @@ pub extern "C" fn recvmsg(fd: c_int, msg: *mut msghdr, flags: c_int) -> ssize_t 
                 let error_kind = std::io::Error::last_os_error().kind();
                 if error_kind == std::io::ErrorKind::WouldBlock {
                     //wait read event
-                    if open_coroutine_core::event_loop::EventLoops::wait_read_event(
+                    if open_coroutine_core::net::EventLoops::wait_read_event(
                         fd,
                         Some(std::time::Duration::from_millis(10)),
                     )
@@ -184,6 +188,6 @@ pub extern "C" fn recvmsg(fd: c_int, msg: *mut msghdr, flags: c_int) -> ssize_t 
             }
             r
         },
-        "recvmsg"
+        recvmsg
     )
 }

@@ -1,5 +1,9 @@
 use libc::{c_int, iovec, msghdr, off_t, size_t, sockaddr, socklen_t, ssize_t};
 use once_cell::sync::Lazy;
+use open_coroutine_core::coroutine::constants::SyscallState;
+use open_coroutine_core::coroutine::Current;
+use open_coroutine_core::coroutine::StateMachine;
+use open_coroutine_core::scheduler::SchedulableCoroutine;
 use std::ffi::c_void;
 
 static SEND: Lazy<extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t> =
@@ -9,19 +13,19 @@ static SEND: Lazy<extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t>
 pub extern "C" fn send(socket: c_int, buf: *const c_void, len: size_t, flags: c_int) -> ssize_t {
     open_coroutine_core::unbreakable!(
         {
-            #[cfg(target_os = "linux")]
-            if open_coroutine_iouring::version::support_io_uring() {
-                return open_coroutine_core::event_loop::EventLoops::send(
-                    Some(Lazy::force(&SEND)),
-                    socket,
-                    buf,
-                    len,
-                    flags,
-                );
-            }
+            // #[cfg(target_os = "linux")]
+            // if open_coroutine_iouring::version::support_io_uring() {
+            //     return open_coroutine_core::net::EventLoops::send(
+            //         Some(Lazy::force(&SEND)),
+            //         socket,
+            //         buf,
+            //         len,
+            //         flags,
+            //     );
+            // }
             impl_expected_write_hook!((Lazy::force(&SEND))(socket, buf, len, flags))
         },
-        "send"
+        send
     )
 }
 
@@ -42,7 +46,7 @@ pub extern "C" fn sendto(
         impl_expected_write_hook!((Lazy::force(&SENDTO))(
             socket, buf, len, flags, addr, addrlen
         )),
-        "sendto"
+        sendto
     )
 }
 
@@ -53,7 +57,7 @@ static PWRITE: Lazy<extern "C" fn(c_int, *const c_void, size_t, off_t) -> ssize_
 pub extern "C" fn pwrite(fd: c_int, buf: *const c_void, count: size_t, offset: off_t) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_write_hook!((Lazy::force(&PWRITE))(fd, buf, count, offset)),
-        "pwrite"
+        pwrite
     )
 }
 
@@ -64,7 +68,7 @@ static WRITEV: Lazy<extern "C" fn(c_int, *const iovec, c_int) -> ssize_t> = init
 pub extern "C" fn writev(fd: c_int, iov: *const iovec, iovcnt: c_int) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_batch_write_hook!((Lazy::force(&WRITEV))(fd, iov, iovcnt,)),
-        "writev"
+        writev
     )
 }
 
@@ -76,7 +80,7 @@ static PWRITEV: Lazy<extern "C" fn(c_int, *const iovec, c_int, off_t) -> ssize_t
 pub extern "C" fn pwritev(fd: c_int, iov: *const iovec, iovcnt: c_int, offset: off_t) -> ssize_t {
     open_coroutine_core::unbreakable!(
         impl_expected_batch_write_hook!((Lazy::force(&PWRITEV))(fd, iov, iovcnt, offset)),
-        "pwritev"
+        pwritev
     )
 }
 
@@ -170,7 +174,7 @@ pub extern "C" fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> ssize_
                 let error_kind = std::io::Error::last_os_error().kind();
                 if error_kind == std::io::ErrorKind::WouldBlock {
                     //wait write event
-                    if open_coroutine_core::event_loop::EventLoops::wait_write_event(
+                    if open_coroutine_core::net::EventLoops::wait_write_event(
                         fd,
                         Some(std::time::Duration::from_millis(10)),
                     )
@@ -187,6 +191,6 @@ pub extern "C" fn sendmsg(fd: c_int, msg: *const msghdr, flags: c_int) -> ssize_
             }
             r
         },
-        "sendmsg"
+        sendmsg
     )
 }

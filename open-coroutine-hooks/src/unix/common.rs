@@ -1,5 +1,9 @@
 use libc::{c_int, c_uint, fd_set, nfds_t, pollfd, timeval};
 use once_cell::sync::Lazy;
+use open_coroutine_core::coroutine::constants::SyscallState;
+use open_coroutine_core::coroutine::Current;
+use open_coroutine_core::coroutine::StateMachine;
+use open_coroutine_core::scheduler::SchedulableCoroutine;
 
 static POLL: Lazy<extern "C" fn(*mut pollfd, nfds_t, c_int) -> c_int> = init_hook!("poll");
 
@@ -27,7 +31,7 @@ pub extern "C" fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int 
             }
             r
         },
-        "poll"
+        poll
     )
 }
 
@@ -102,6 +106,6 @@ pub extern "C" fn select(
             }
             r
         },
-        "select"
+        select
     )
 }

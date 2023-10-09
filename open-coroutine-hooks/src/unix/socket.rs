@@ -1,6 +1,10 @@
 use libc::{c_int, sockaddr, socklen_t};
 use once_cell::sync::Lazy;
-use open_coroutine_core::event_loop::EventLoops;
+use open_coroutine_core::coroutine::constants::SyscallState;
+use open_coroutine_core::coroutine::Current;
+use open_coroutine_core::coroutine::StateMachine;
+use open_coroutine_core::net::EventLoops;
+use open_coroutine_core::scheduler::SchedulableCoroutine;
 use std::ffi::c_void;
 use std::io::Error;
 
@@ -11,15 +15,15 @@ static CONNECT: Lazy<extern "C" fn(c_int, *const sockaddr, socklen_t) -> c_int> 
 pub extern "C" fn connect(socket: c_int, address: *const sockaddr, len: socklen_t) -> c_int {
     open_coroutine_core::unbreakable!(
         {
-            #[cfg(target_os = "linux")]
-            if open_coroutine_iouring::version::support_io_uring() {
-                return open_coroutine_core::event_loop::EventLoops::connect(
-                    Some(Lazy::force(&CONNECT)),
-                    socket,
-                    address,
-                    len,
-                );
-            }
+            // #[cfg(target_os = "linux")]
+            // if open_coroutine_iouring::version::support_io_uring() {
+            //     return open_coroutine_core::net::EventLoops::connect(
+            //         Some(Lazy::force(&CONNECT)),
+            //         socket,
+            //         address,
+            //         len,
+            //     );
+            // }
             let blocking = crate::unix::is_blocking(socket);
             if blocking {
                 crate::unix::set_non_blocking(socket);
@@ -79,7 +83,7 @@ pub extern "C" fn connect(socket: c_int, address: *const sockaddr, len: socklen_
             }
             r
         },
-        "connect"
+        connect
     )
 }
 
@@ -88,7 +92,7 @@ static LISTEN: Lazy<extern "C" fn(c_int, c_int) -> c_int> = init_hook!("listen")
 #[no_mangle]
 pub extern "C" fn listen(socket: c_int, backlog: c_int) -> c_int {
     //unnecessary non blocking impl for listen
-    open_coroutine_core::unbreakable!((Lazy::force(&LISTEN))(socket, backlog), "listen")
+    open_coroutine_core::unbreakable!((Lazy::force(&LISTEN))(socket, backlog), listen)
 }
 
 static ACCEPT: Lazy<extern "C" fn(c_int, *mut sockaddr, *mut socklen_t) -> c_int> =
@@ -102,7 +106,7 @@ pub extern "C" fn accept(
 ) -> c_int {
     open_coroutine_core::unbreakable!(
         impl_read_hook!((Lazy::force(&ACCEPT))(socket, address, address_len)),
-        "accept"
+        accept
     )
 }
 
@@ -124,6 +128,6 @@ pub extern "C" fn shutdown(socket: c_int, how: c_int) -> c_int {
             };
             (Lazy::force(&SHUTDOWN))(socket, how)
         },
-        "shutdown"
+        shutdown
     )
 }
