@@ -252,7 +252,7 @@ impl SchedulerImpl<'_> {
 impl Default for SchedulerImpl<'_> {
     fn default() -> Self {
         Self::new(
-            uuid::Uuid::new_v4().to_string(),
+            format!("open-coroutine-scheduler-{}", uuid::Uuid::new_v4()),
             crate::coroutine::DEFAULT_STACK_SIZE,
         )
     }
@@ -405,7 +405,7 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
             let coroutine = r.1;
             match coroutine.state() {
                 CoroutineState::SystemCall(val, syscall, _) => {
-                    coroutine.syscall(val, syscall, SyscallState::Finished)?;
+                    coroutine.syscall(val, syscall, SyscallState::Computing)?;
                 }
                 _ => unreachable!("try_resume should never execute to here"),
             }
@@ -434,7 +434,7 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                     match coroutine.resume() {
                         Ok(state) => {
                             match state {
-                                CoroutineState::Suspend(_, timestamp) => {
+                                CoroutineState::Suspend((), timestamp) => {
                                     self.on_suspend(timeout_time, &coroutine);
                                     if timestamp <= open_coroutine_timer::now() {
                                         self.ready.push_back(coroutine);
@@ -442,7 +442,7 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                                         self.suspend.insert(timestamp, coroutine);
                                     }
                                 }
-                                CoroutineState::SystemCall(_, syscall, state) => {
+                                CoroutineState::SystemCall((), syscall, state) => {
                                     self.on_syscall(timeout_time, &coroutine, syscall, state);
                                     #[allow(box_pointers)]
                                     let co_name = Box::leak(Box::from(coroutine.get_name()));
@@ -451,7 +451,7 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                                     }
                                     _ = self.syscall.insert(co_name, coroutine);
                                 }
-                                CoroutineState::Complete(_) => {
+                                CoroutineState::Complete(()) => {
                                     self.on_complete(timeout_time, &coroutine);
                                 }
                                 CoroutineState::Error(message) => {

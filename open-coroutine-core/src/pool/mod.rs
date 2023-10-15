@@ -3,6 +3,7 @@ use crate::coroutine::suspender::SimpleSuspender;
 use crate::coroutine::{Current, Named};
 use crate::pool::constants::PoolState;
 use crate::pool::creator::CoroutineCreator;
+use crate::pool::join::{JoinHandle, JoinHandleImpl};
 use crate::pool::task::{Task, TaskImpl};
 use crate::scheduler::{SchedulableCoroutine, Scheduler, SchedulerImpl};
 use crossbeam_deque::{Injector, Steal};
@@ -23,10 +24,13 @@ pub mod constants;
 /// Task abstraction and impl.
 pub mod task;
 
+/// Task join abstraction and impl.
+pub mod join;
+
 mod creator;
 
 /// The `Pool` abstraction.
-pub trait Pool<'p>: Debug + Default + RefUnwindSafe + Named {
+pub trait Pool<'p, Join: JoinHandle>: Debug + Default + RefUnwindSafe + Named {
     /// Get the state of this pool.
     fn get_state(&self) -> PoolState;
 
@@ -76,8 +80,8 @@ pub trait Pool<'p>: Debug + Default + RefUnwindSafe + Named {
         param: Option<usize>,
         wait_time: Duration,
     ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>> {
-        let task_name = self.submit(name, func, param);
-        self.wait_result(task_name, wait_time)
+        let join = self.submit(name, func, param);
+        self.wait_result(join.get_name()?, wait_time)
     }
 
     /// Use the given `task_name` to obtain task results, and if no results are found,
@@ -101,7 +105,7 @@ pub trait Pool<'p>: Debug + Default + RefUnwindSafe + Named {
         name: Option<String>,
         func: impl FnOnce(Option<usize>) -> Option<usize> + UnwindSafe + 'p,
         param: Option<usize>,
-    ) -> &str {
+    ) -> Join {
         self.submit_raw(TaskImpl::new(
             name.unwrap_or(format!("{}|{}", self.get_name(), uuid::Uuid::new_v4())),
             func,
@@ -113,7 +117,10 @@ pub trait Pool<'p>: Debug + Default + RefUnwindSafe + Named {
     ///
     /// Allow multiple threads to concurrently submit task to the pool,
     /// but only allow one thread to execute scheduling.
-    fn submit_raw(&self, task: TaskImpl<'p>) -> &str;
+    fn submit_raw(&self, task: TaskImpl<'p>) -> Join;
+
+    /// pop a task
+    fn pop(&self) -> Option<TaskImpl<'p>>;
 
     /// Change the blocker in this pool.
     fn change_blocker(&self, blocker: impl Blocker + 'p) -> Box<dyn Blocker>
@@ -136,7 +143,7 @@ pub trait Pool<'p>: Debug + Default + RefUnwindSafe + Named {
 }
 
 /// The `CoroutinePool` abstraction.
-pub trait CoroutinePool<'p>: Current<'p> + Pool<'p> {
+pub trait CoroutinePool<'p>: Current<'p> + Pool<'p, JoinHandleImpl<'p>> {
     /// Create a new `CoroutinePool` instance.
     fn new(
         name: String,
@@ -165,9 +172,6 @@ pub trait CoroutinePool<'p>: Current<'p> + Pool<'p> {
     /// # Errors
     /// if change to ready fails.
     fn try_resume(&self, co_name: &'p str) -> std::io::Result<()>;
-
-    /// pop a task
-    fn pop(&self) -> Option<TaskImpl>;
 
     /// Attempt to run a task in current coroutine or thread.
     fn try_run(&self) -> Option<()>;
@@ -261,6 +265,7 @@ impl Drop for CoroutinePoolImpl<'_> {
         }
     }
 }
+
 unsafe impl Send for CoroutinePoolImpl<'_> {}
 
 unsafe impl Sync for CoroutinePoolImpl<'_> {}
@@ -277,7 +282,7 @@ impl Default for CoroutinePoolImpl<'_> {
     fn default() -> Self {
         let blocker = crate::blocker::SleepBlocker::default();
         Self::new(
-            uuid::Uuid::new_v4().to_string(),
+            format!("open-coroutine-pool-{}", uuid::Uuid::new_v4()),
             1,
             crate::coroutine::DEFAULT_STACK_SIZE,
             0,
@@ -335,7 +340,7 @@ impl<'p> Current<'p> for CoroutinePoolImpl<'p> {
     }
 }
 
-impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
+impl<'p> Pool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     fn get_state(&self) -> PoolState {
         self.state.get()
     }
@@ -384,6 +389,10 @@ impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
         wait_time: Duration,
     ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>> {
         let key = Box::leak(Box::from(task_name));
+        if let Some(r) = self.try_get_result(key) {
+            _ = self.waits.remove(key);
+            return Ok(Some(r));
+        }
         if SchedulableCoroutine::current().is_some() {
             let timeout_time = open_coroutine_timer::get_timeout_time(wait_time);
             loop {
@@ -392,7 +401,7 @@ impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
                     return Ok(Some(r));
                 }
                 if timeout_time.saturating_sub(open_coroutine_timer::now()) == 0 {
-                    return Err(Error::new(ErrorKind::Other, "wait timeout"));
+                    return Err(Error::new(ErrorKind::TimedOut, "wait timeout"));
                 }
             }
         }
@@ -404,21 +413,35 @@ impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
             arc
         };
         let (lock, cvar) = &*arc;
-        let result = cvar
+        _ = cvar
             .wait_timeout_while(lock.lock().unwrap(), wait_time, |&mut pending| pending)
             .unwrap();
-        if result.1.timed_out() {
-            return Err(Error::new(ErrorKind::Other, "wait timeout"));
+        if let Some(r) = self.try_get_result(key) {
+            assert!(self.waits.remove(key).is_some());
+            return Ok(Some(r));
         }
-        assert!(self.waits.remove(key).is_some());
-        Ok(self.try_get_result(key))
+        Err(Error::new(ErrorKind::TimedOut, "wait timeout"))
     }
 
     #[allow(box_pointers)]
-    fn submit_raw(&self, task: TaskImpl<'p>) -> &str {
+    fn submit_raw(&self, task: TaskImpl<'p>) -> JoinHandleImpl<'p> {
         let task_name = Box::leak(Box::from(task.get_name()));
         self.task_queue.push(task);
-        task_name
+        JoinHandleImpl::new(self, task_name)
+    }
+
+    fn pop(&self) -> Option<TaskImpl<'p>> {
+        // Fast path, if len == 0, then there are no values
+        if self.is_empty() {
+            return None;
+        }
+        loop {
+            match self.task_queue.steal() {
+                Steal::Success(item) => return Some(item),
+                Steal::Retry => continue,
+                Steal::Empty => return None,
+            }
+        }
     }
 
     #[allow(box_pointers)]
@@ -495,7 +518,7 @@ impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
                 .wait_timeout_while(lock.lock().unwrap(), wait_time, |&mut pending| pending)
                 .unwrap();
             if result.1.timed_out() {
-                return Err(Error::new(ErrorKind::Other, "stop timeout !"));
+                return Err(Error::new(ErrorKind::TimedOut, "stop timeout !"));
             }
             assert_eq!(
                 PoolState::Stopping(true),
@@ -518,7 +541,7 @@ impl<'p> Pool<'p> for CoroutinePoolImpl<'p> {
                 return Ok(());
             }
             if left_time == 0 {
-                return Err(Error::new(ErrorKind::Other, "stop timeout !"));
+                return Err(Error::new(ErrorKind::TimedOut, "stop timeout !"));
             }
             left = Duration::from_nanos(left_time);
         }
@@ -570,20 +593,6 @@ impl<'p> CoroutinePool<'p> for CoroutinePoolImpl<'p> {
 
     fn try_resume(&self, co_name: &'p str) -> std::io::Result<()> {
         unsafe { (*self.workers.get()).try_resume(co_name) }
-    }
-
-    fn pop(&self) -> Option<TaskImpl> {
-        // Fast path, if len == 0, then there are no values
-        if self.is_empty() {
-            return None;
-        }
-        loop {
-            match self.task_queue.steal() {
-                Steal::Success(item) => return Some(item),
-                Steal::Retry => continue,
-                Steal::Empty => return None,
-            }
-        }
     }
 
     fn try_run(&self) -> Option<()> {
@@ -712,7 +721,7 @@ mod tests {
             },
             None,
         );
-        assert_eq!(task_name, name);
+        assert_eq!(task_name, name.get_name().unwrap());
         _ = pool.try_schedule();
         assert_eq!(
             Some((
@@ -836,7 +845,7 @@ mod tests {
             },
             None,
         );
-        assert_eq!(task_name, name);
+        assert_eq!(task_name, name.get_name().unwrap());
         assert_eq!(None, pool.try_get_result(task_name));
         match pool.wait_result(task_name, Duration::from_millis(100)) {
             Ok(_) => panic!(),

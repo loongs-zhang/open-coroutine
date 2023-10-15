@@ -211,8 +211,7 @@ where
                         self.suspend(y, timestamp)?;
                         new_state
                     }
-                    CoroutineState::SystemCall(_, syscall, state) => {
-                        self.syscall(y, syscall, state)?;
+                    CoroutineState::SystemCall(y, syscall, state) => {
                         CoroutineState::SystemCall(y, syscall, state)
                     }
                     _ => {

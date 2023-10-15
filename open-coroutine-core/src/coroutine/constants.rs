@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter};
 
 /// Enums used to describe syscall
@@ -58,6 +60,28 @@ pub enum Syscall {
 impl Display for Syscall {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(self, f)
+    }
+}
+
+thread_local! {
+    static SYSCALL: RefCell<VecDeque<Syscall>> = RefCell::new(VecDeque::new());
+}
+
+#[allow(missing_docs)]
+impl Syscall {
+    pub fn init_current(current: Self) {
+        SYSCALL.with(|s| {
+            s.borrow_mut().push_front(current);
+        });
+    }
+
+    #[must_use]
+    pub fn current() -> Option<Self> {
+        SYSCALL.with(|s| s.borrow().front().copied())
+    }
+
+    pub fn clean_current() {
+        SYSCALL.with(|s| _ = s.borrow_mut().pop_front());
     }
 }
 

@@ -64,6 +64,19 @@ pub mod scheduler;
 /// Coroutine pool abstraction and impl.
 pub mod pool;
 
+/// CPU bound to monitor
+pub const MONITOR_CPU: usize = 0;
+
 /// Monitor abstraction and impl.
 #[cfg(all(unix, feature = "preemptive-schedule"))]
-mod monitor;
+pub mod monitor;
+
+/// net abstraction and impl.
+#[allow(
+    missing_docs,
+    box_pointers,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc
+)]
+#[cfg(feature = "net")]
+pub mod net;

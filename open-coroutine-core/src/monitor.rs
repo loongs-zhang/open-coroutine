@@ -1,6 +1,8 @@
-use crate::blocker::{Blocker, SleepBlocker};
+use crate::blocker::Blocker;
 use crate::coroutine::constants::CoroutineState;
 use crate::coroutine::suspender::SimpleSuspender;
+#[cfg(feature = "logs")]
+use crate::coroutine::Named;
 use crate::coroutine::{Coroutine, Current, StateMachine};
 use crate::pool::{CoroutinePool, CoroutinePoolImpl, Pool};
 use crate::scheduler::{Listener, SchedulableCoroutine, SchedulableSuspender};
@@ -18,11 +20,13 @@ use std::time::Duration;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 struct TaskNode {
+    timestamp: u64,
     pthread: Pthread,
     coroutine: *const c_void,
 }
 
-trait Monitor {
+/// A trait implemented for sending signals.
+pub trait Monitor {
     /// Get a global `WorkStealQueue` instance.
     fn get_instance<'m>() -> &'m Self;
 
@@ -49,27 +53,15 @@ trait Monitor {
     fn remove(&self, timestamp: u64, coroutine: &SchedulableCoroutine);
 }
 
-#[allow(box_pointers)]
+#[allow(missing_docs, box_pointers)]
 #[derive(Debug)]
-struct MonitorImpl {
+pub struct MonitorImpl {
     cpu: usize,
     tasks: UnsafeCell<TimerList<TaskNode>>,
+    clean_queue: UnsafeCell<Vec<TaskNode>>,
     run: AtomicBool,
     monitor: UnsafeCell<MaybeUninit<JoinHandle<()>>>,
     blocker: RefCell<Box<dyn Blocker>>,
-}
-
-impl Default for MonitorImpl {
-    fn default() -> Self {
-        MonitorImpl {
-            cpu: 0,
-            tasks: UnsafeCell::new(TimerList::default()),
-            run: AtomicBool::default(),
-            monitor: UnsafeCell::new(MaybeUninit::uninit()),
-            #[allow(box_pointers)]
-            blocker: RefCell::new(Box::<SleepBlocker>::default()),
-        }
-    }
 }
 
 extern "C" fn sigurg_handler(_: libc::c_int) {
@@ -90,7 +82,21 @@ impl Monitor for MonitorImpl {
         static MONITOR: AtomicUsize = AtomicUsize::new(0);
         let mut ret = MONITOR.load(Ordering::Relaxed);
         if ret == 0 {
-            let ptr: &'m mut MonitorImpl = Box::leak(Box::default());
+            cfg_if::cfg_if! {
+                if #[cfg(feature = "net")] {
+                    let blocker = Box::new(crate::blocker::MonitorNetBlocker::new());
+                } else {
+                    let blocker = Box::<crate::blocker::CondvarBlocker>::default();
+                }
+            }
+            let ptr: &'m mut MonitorImpl = Box::leak(Box::new(MonitorImpl {
+                cpu: crate::MONITOR_CPU,
+                tasks: UnsafeCell::new(TimerList::default()),
+                clean_queue: UnsafeCell::new(Vec::new()),
+                run: AtomicBool::default(),
+                monitor: UnsafeCell::new(MaybeUninit::uninit()),
+                blocker: RefCell::new(blocker),
+            }));
             ret = ptr as *mut MonitorImpl as usize;
             MONITOR.store(ret, Ordering::Relaxed);
         }
@@ -158,8 +164,6 @@ impl Monitor for MonitorImpl {
                                                 if pthread_kill(node.pthread, Signal::SIGURG)
                                                     .is_err()
                                                 {
-                                                    #[cfg(feature = "logs")]
-                                                    use crate::coroutine::Named;
                                                     crate::error!("Attempt to preempt scheduling for the coroutine:{} in thread:{} failed !",
                                                                 coroutine.get_name(), node.pthread);
                                                 }
@@ -171,6 +175,19 @@ impl Monitor for MonitorImpl {
                                 }
                                 _ = pool.try_schedule();
                             }
+                            {
+                                let queue = unsafe { &mut *monitor.clean_queue.get() };
+                                let tasks = unsafe { &mut *monitor.tasks.get() };
+                                while let Some(node) = queue.pop() {
+                                    let timestamp= node.timestamp;
+                                    if let Some(entry) = tasks.get_entry(&timestamp) {
+                                        _ = entry.remove(&node);
+                                        if entry.is_empty() {
+                                            _ = tasks.remove(&timestamp);
+                                        }
+                                    }
+                                }
+                            }
                             //monitor线程不执行协程计算任务，每次循环至少wait 1ms
                             loop {
                                 #[allow(box_pointers)]
@@ -180,6 +197,8 @@ impl Monitor for MonitorImpl {
                                 }
                             }
                         }
+                        _ = pool.stop(Duration::from_secs(30));
+                        crate::warn!("open-coroutine-monitor has exited");
                     })
                     .map_err(|e| Error::new(ErrorKind::Other, format!("{e:?}")))?,
             );
@@ -197,6 +216,7 @@ impl Monitor for MonitorImpl {
         tasks.insert(
             timestamp,
             TaskNode {
+                timestamp,
                 pthread: pthread_self(),
                 coroutine: (coroutine as *const SchedulableCoroutine).cast::<c_void>(),
             },
@@ -205,18 +225,12 @@ impl Monitor for MonitorImpl {
     }
 
     fn remove(&self, timestamp: u64, coroutine: &SchedulableCoroutine) {
-        let tasks = unsafe { &mut *self.tasks.get() };
-        if let Some(entry) = tasks.get_entry(&timestamp) {
-            if !entry.is_empty() {
-                _ = entry.remove(&TaskNode {
-                    pthread: pthread_self(),
-                    coroutine: (coroutine as *const SchedulableCoroutine).cast::<c_void>(),
-                });
-            }
-            if entry.is_empty() {
-                _ = tasks.remove(&timestamp);
-            }
-        }
+        let queue = unsafe { &mut *self.clean_queue.get() };
+        queue.push(TaskNode {
+            timestamp,
+            pthread: pthread_self(),
+            coroutine: (coroutine as *const SchedulableCoroutine).cast::<c_void>(),
+        });
     }
 }
 
@@ -258,14 +272,23 @@ impl Listener for MonitorListener {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blocker::DelayBlocker;
+    use crate::blocker::{CondvarBlocker, DelayBlocker, DELAY_BLOCKER_NAME};
+    use crate::coroutine::Named;
 
     #[test]
     fn change_blocker() {
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "net")] {
+                let blocker = crate::blocker::MonitorNetBlocker::new();
+            } else {
+                let blocker = crate::blocker::CondvarBlocker::default();
+            }
+        }
         let previous = MonitorImpl::change_blocker(DelayBlocker::default());
-        assert_eq!("SleepBlocker", previous.get_name());
-        let previous = MonitorImpl::change_blocker(SleepBlocker::default());
-        assert_eq!("DelayBlocker", previous.get_name());
+        assert_eq!(blocker.get_name(), previous.get_name());
+        let previous = MonitorImpl::change_blocker(CondvarBlocker::default());
+        assert_eq!(DELAY_BLOCKER_NAME, previous.get_name());
+        _ = MonitorImpl::change_blocker(blocker);
     }
 
     #[cfg(not(target_arch = "riscv64"))]
@@ -347,7 +370,10 @@ mod tests {
             )
             .unwrap();
         if result.1.timed_out() {
-            Err(Error::new(ErrorKind::Other, "preemptive schedule failed"))
+            Err(Error::new(
+                ErrorKind::TimedOut,
+                "preemptive schedule failed",
+            ))
         } else {
             assert!(
                 !TEST_FLAG1.load(Ordering::Acquire),

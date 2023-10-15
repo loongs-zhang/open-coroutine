@@ -20,6 +20,9 @@ cd "${PROJECT_DIR}"/open-coroutine-core
 "${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei
 "${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei --release
 
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net --release
+
 if [ "${TARGET}" != "riscv64gc-unknown-linux-gnu" ]; then
     "${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule
 fi
