@@ -1,25 +1,5 @@
-[package]
-name = "libfiber"
-version = "0.1.0"
-edition = "2021"
-license-file = "LICENSE.txt"
-
-[dependencies]
-libc = "0.2.119"
-chrono = "0.4.19"
-threadpool = "1.8.1"
-num_cpus = "1.13.1"
-
-[build-dependencies]
-# 从c/c++头文件自动生成rust
-bindgen = "0.59.2"
-cc = "1.0.73"
-rustversion = "1.0.6"
-
-[dev-dependencies]
-# benchmark
-criterion = "0.3.5"
-
-[[bench]]
-name = "benchmark"
-harness = false
+[workspace]
+members = [
+    "open-coroutine-timer",
+    "open-coroutine-queue",
+]
