@@ -16,14 +16,17 @@ cfg-if = "1.0.0"
 num_cpus = { version = "1.14.0", optional = true }
 once_cell = { version = "1.18.0", optional = true }
 crossbeam-utils = { version = "0.8.15", optional = true }
-polling = { version = "2.8.0", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
 nix = { version = "0.27.1", features = ["signal"] }
+mio = { version = "0.8.8", features = ["os-ext"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.6.1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+polling = { version = "2.8.0", optional = true }
 
 [build-dependencies]
 cfg-if = "1.0.0"
@@ -42,7 +45,7 @@ slab = "0.4.8"
 default = ["full"]
 
 # Provide net API abstraction and implementation.
-net = ["num_cpus", "once_cell", "crossbeam-utils", "polling"]
+net = ["num_cpus", "once_cell", "crossbeam-utils", "mio", "polling"]
 
 # Provide io_uring abstraction and implementation.
 # This feature only works in linux.

@@ -44,12 +44,8 @@
 )]
 
 //! Associate `VecDeque` with `timestamps`.
-
-use dashmap::mapref::one::{Ref, RefMut};
-use dashmap::DashMap;
-use std::collections::hash_map::RandomState;
 use std::collections::vec_deque::{Iter, IterMut};
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// get the current wall clock in ns
@@ -149,18 +145,12 @@ impl<T> TimerEntry<T> {
 
 /// A queue for managing multiple `TimerEntry`.
 #[repr(C)]
-#[derive(Debug)]
-pub struct TimerList<T> {
-    inner: DashMap<u64, TimerEntry<T>>,
-    ordered: BTreeSet<u64>,
-}
+#[derive(Debug, PartialEq, Eq)]
+pub struct TimerList<T>(BTreeMap<u64, TimerEntry<T>>);
 
 impl<T> Default for TimerList<T> {
     fn default() -> Self {
-        TimerList {
-            inner: DashMap::default(),
-            ordered: BTreeSet::default(),
-        }
+        TimerList(BTreeMap::new())
     }
 }
 
@@ -168,11 +158,11 @@ impl<T> TimerList<T> {
     /// Returns the number of elements in the deque.
     #[must_use]
     pub fn len(&self) -> usize {
-        if self.inner.is_empty() {
+        if self.0.is_empty() {
             return 0;
         }
         let mut total = 0;
-        for entry in &self.inner {
+        for entry in self.0.values() {
             total += entry.len();
         }
         total
@@ -181,20 +171,19 @@ impl<T> TimerList<T> {
     /// Returns the number of entries in the deque.
     #[must_use]
     pub fn entry_len(&self) -> usize {
-        self.inner.len()
+        self.0.len()
     }
 
     /// Inserts an element at `timestamp` within the deque, shifting all elements
     /// with indices greater than or equal to `timestamp` towards the back.
     pub fn insert(&mut self, timestamp: u64, t: T) {
-        if let Some(mut entry) = self.inner.get_mut(&timestamp) {
+        if let Some(entry) = self.0.get_mut(&timestamp) {
             entry.push_back(t);
             return;
         }
         let mut entry = TimerEntry::new(timestamp);
-        _ = self.ordered.insert(timestamp);
         entry.push_back(t);
-        if let Some(mut entry) = self.inner.insert(timestamp, entry) {
+        if let Some(mut entry) = self.0.insert(timestamp, entry) {
             // concurrent, just retry
             while !entry.is_empty() {
                 if let Some(e) = entry.pop_front() {
@@ -206,19 +195,13 @@ impl<T> TimerList<T> {
 
     /// Provides a reference to the front element, or `None` if the deque is empty.
     #[must_use]
-    pub fn front(&self) -> Option<Ref<'_, u64, TimerEntry<T>>> {
-        if let Some(time) = self.ordered.first() {
-            return self.inner.get(time);
-        }
-        None
+    pub fn front(&self) -> Option<(&u64, &TimerEntry<T>)> {
+        self.0.first_key_value()
     }
 
     /// Removes the first element and returns it, or `None` if the deque is empty.
     pub fn pop_front(&mut self) -> Option<(u64, TimerEntry<T>)> {
-        if let Some(time) = self.ordered.pop_first() {
-            return self.inner.remove(&time);
-        }
-        None
+        self.0.pop_first()
     }
 
     /// Returns `true` if the deque is empty.
@@ -228,36 +211,26 @@ impl<T> TimerList<T> {
     }
 
     /// Provides a mutable reference to the entry at the given `timestamp`.
-    pub fn get_entry(&mut self, timestamp: &u64) -> Option<RefMut<'_, u64, TimerEntry<T>>> {
-        self.inner.get_mut(timestamp)
+    pub fn get_entry(&mut self, timestamp: &u64) -> Option<&mut TimerEntry<T>> {
+        self.0.get_mut(timestamp)
     }
 
     /// Removes and returns the element at `timestamp` from the deque.
     /// Whichever end is closer to the removal point will be moved to make
     /// room, and all the affected elements will be moved to new positions.
     /// Returns `None` if `timestamp` is out of bounds.
-    pub fn remove(&mut self, timestamp: &u64) -> Option<(u64, TimerEntry<T>)> {
-        self.inner.remove(timestamp).map(|v| {
-            _ = self.ordered.remove(timestamp);
-            v
-        })
+    pub fn remove(&mut self, timestamp: &u64) -> Option<TimerEntry<T>> {
+        self.0.remove(timestamp)
     }
 
     /// Returns a front-to-back iterator that returns mutable references.
-    #[must_use]
-    pub fn iter_mut(
-        &mut self,
-    ) -> dashmap::iter::IterMut<'_, u64, TimerEntry<T>, RandomState, DashMap<u64, TimerEntry<T>>>
-    {
-        self.inner.iter_mut()
+    pub fn iter_mut(&mut self) -> std::collections::btree_map::IterMut<'_, u64, TimerEntry<T>> {
+        self.0.iter_mut()
     }
 
     /// Returns a front-to-back iterator.
-    #[must_use]
-    pub fn iter(
-        &self,
-    ) -> dashmap::iter::Iter<'_, u64, TimerEntry<T>, RandomState, DashMap<u64, TimerEntry<T>>> {
-        self.inner.iter()
+    pub fn iter(&self) -> std::collections::btree_map::Iter<'_, u64, TimerEntry<T>> {
+        self.0.iter()
     }
 }
 
@@ -278,7 +251,6 @@ mod tests {
         list.insert(2, String::from("data is 2"));
         list.insert(3, String::from("data is 3"));
         assert_eq!(list.entry_len(), 3);
-        assert_eq!(BTreeSet::from([1, 2, 3]), list.ordered);
 
         let mut entry = list.pop_front().unwrap().1;
         assert_eq!(entry.len(), 1);
@@ -287,6 +259,5 @@ mod tests {
         assert_eq!(entry.len(), 0);
         assert!(list.get_entry(&2).is_some());
         assert!(list.get_entry(&3).is_some());
-        assert_eq!(BTreeSet::from([2, 3]), list.ordered);
     }
 }
