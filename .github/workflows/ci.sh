@@ -27,6 +27,10 @@ cd "${PROJECT_DIR}"/open-coroutine-queue
 
 # test open-coroutine-core mod
 cd "${PROJECT_DIR}"/open-coroutine-core
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei --release
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net --release
 if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ]; then
     "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring
     "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring --release

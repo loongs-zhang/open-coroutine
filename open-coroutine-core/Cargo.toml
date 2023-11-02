@@ -11,11 +11,24 @@ license = "LGPL-3.0 OR Apache-2.0"
 readme = "../README.md"
 
 [dependencies]
+open-coroutine-timer = { version = "0.5.0", path = "../open-coroutine-timer" }
+open-coroutine-queue = { version = "0.5.0", path = "../open-coroutine-queue" }
 dashmap = "5.5.1"
 cfg-if = "1.0.0"
+uuid = { version = "1.3.0", features = [
+    "v4",
+    "fast-rng",
+    "macro-diagnostics",
+] }
+corosensei = { version = "0.1.4", optional = true }
+context = { version = "3.0.0", optional = true }
+# net
 num_cpus = { version = "1.14.0", optional = true }
 once_cell = { version = "1.18.0", optional = true }
 crossbeam-utils = { version = "0.8.15", optional = true }
+# logs
+log = { version = "0.4.20", optional = true }
+simplelog = { version = "0.12.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.148"
@@ -26,6 +39,12 @@ mio = { version = "0.8.8", features = ["os-ext"], optional = true }
 io-uring = { version = "0.6.1", optional = true }
 
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.48.0", features = [
+    "Win32_Foundation",
+    "Win32_System_Kernel",
+    "Win32_System_SystemInformation",
+    "Win32_System_Diagnostics_Debug"
+] }
 polling = { version = "2.8.0", optional = true }
 
 [build-dependencies]
@@ -44,12 +63,20 @@ slab = "0.4.8"
 [features]
 default = ["full"]
 
+# Supported low-level coroutines.
+boost = ["context"]
+korosensei = ["corosensei", "nix/pthread"]
+
 # Provide net API abstraction and implementation.
-net = ["num_cpus", "once_cell", "crossbeam-utils", "mio", "polling"]
+net = ["korosensei", "num_cpus", "once_cell", "crossbeam-utils", "mio", "polling"]
 
 # Provide io_uring abstraction and implementation.
 # This feature only works in linux.
 io_uring = ["net", "io-uring"]
 
+# Print some help log.
+# Enable for default.
+logs = ["log", "simplelog"]
+
 # Enable all features.
-full = ["io_uring"]
+full = ["io_uring", "logs"]
