@@ -45,12 +45,21 @@
 
 //! see `https://github.com/acl-dev/open-coroutine`
 
+#[allow(missing_docs)]
+pub mod log;
+
 /// Get the kernel version.
 #[cfg(target_os = "linux")]
 pub mod version;
 
 /// Constants.
 pub mod constants;
+
+/// Common traits.
+pub mod common;
+
+/// Coroutine abstraction and impl.
+pub mod coroutine;
 
 /// net abstraction and impl.
 #[allow(

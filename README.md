@@ -6,7 +6,7 @@ The `open-coroutine` is a simple, efficient and generic stackful-coroutine libra
     <img src="https://github.com/acl-dev/open-coroutine-docs/blob/master/img/architecture.png" width="100%">
 </div>
 
-[我有故事,你有酒吗?](docs/README.md)
+[我有故事,你有酒吗?](https://github.com/acl-dev/open-coroutine-docs)
 
 ## Status
 
