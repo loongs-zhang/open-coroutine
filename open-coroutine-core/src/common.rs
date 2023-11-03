@@ -1,4 +1,6 @@
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 #[allow(clippy::pedantic, missing_docs)]
 pub fn page_size() -> usize {
@@ -43,4 +45,41 @@ pub trait Current<'c> {
     fn clean_current()
     where
         Self: Sized;
+}
+
+/// A trait for blocking current thread.
+pub trait Blocker: Debug + Named {
+    /// Block current thread for a while.
+    fn block(&self, dur: Duration);
+}
+
+/// Join abstraction.
+pub trait JoinHandle {
+    /// get the task name.
+    ///
+    /// # Errors
+    /// if the task name is invalid.
+    fn get_name(&self) -> std::io::Result<&str>;
+
+    /// join with `Duration`.
+    ///
+    /// # Errors
+    /// see `timeout_at_join`.
+    fn timeout_join(&self, dur: Duration) -> std::io::Result<Result<Option<usize>, &str>> {
+        self.timeout_at_join(open_coroutine_timer::get_timeout_time(dur))
+    }
+
+    /// join.
+    ///
+    /// # Errors
+    /// see `timeout_at_join`.
+    fn join(&self) -> std::io::Result<Result<Option<usize>, &str>> {
+        self.timeout_at_join(u64::MAX)
+    }
+
+    /// join with timeout.
+    ///
+    /// # Errors
+    /// if join failed.
+    fn timeout_at_join(&self, timeout_time: u64) -> std::io::Result<Result<Option<usize>, &str>>;
 }

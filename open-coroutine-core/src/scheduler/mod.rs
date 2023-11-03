@@ -1,11 +1,13 @@
-use crate::common::{Current, Named};
+use crate::common::{Current, JoinHandle, Named};
 use crate::constants::{CoroutineState, SyscallState};
 use crate::coroutine::suspender::{Suspender, SuspenderImpl};
 use crate::coroutine::{Coroutine, CoroutineImpl, SimpleCoroutine, StateCoroutine};
+use crate::scheduler::join::JoinHandleImpl;
 use crate::scheduler::listener::Listener;
 use dashmap::DashMap;
 use open_coroutine_queue::LocalQueue;
 use open_coroutine_timer::TimerList;
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::fmt::Debug;
@@ -14,7 +16,7 @@ use std::panic::UnwindSafe;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A type for Scheduler.
-pub type SchedulableCoroutine<'s> = CoroutineImpl<'s, (), (), ()>;
+pub type SchedulableCoroutine<'s> = CoroutineImpl<'s, (), (), Option<usize>>;
 
 /// A type for Scheduler.
 pub type SchedulableSuspender<'s> = SuspenderImpl<'s, (), ()>;
@@ -22,11 +24,16 @@ pub type SchedulableSuspender<'s> = SuspenderImpl<'s, (), ()>;
 /// Listener abstraction and impl.
 pub mod listener;
 
+/// Join impl for scheduler.
+pub mod join;
+
 #[cfg(test)]
 mod tests;
 
 /// A trait implemented for schedulers.
-pub trait Scheduler<'s>: Debug + Default + Named + Current<'s> + Listener {
+pub trait Scheduler<'s, Join: JoinHandle>:
+    Debug + Default + Named + Current<'s> + Listener
+{
     /// Extension points within the open-coroutine framework.
     fn init(&mut self);
 
@@ -41,11 +48,11 @@ pub trait Scheduler<'s>: Debug + Default + Named + Current<'s> + Listener {
     ///
     /// # Errors
     /// if create coroutine fails.
-    fn submit_coroutine(
+    fn submit_co(
         &self,
-        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) + UnwindSafe + 's,
+        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) -> Option<usize> + UnwindSafe + 's,
         stack_size: Option<usize>,
-    ) -> std::io::Result<()>;
+    ) -> std::io::Result<Join>;
 
     /// Resume a coroutine from the system call table to the ready queue,
     /// it's generally only required for framework level crates.
@@ -63,7 +70,7 @@ pub trait Scheduler<'s>: Debug + Default + Named + Current<'s> + Listener {
     ///
     /// # Errors
     /// see `try_timeout_schedule`.
-    fn try_schedule(&mut self) -> std::io::Result<()> {
+    fn try_schedule(&self) -> std::io::Result<()> {
         _ = self.try_timeout_schedule(std::time::Duration::MAX.as_secs())?;
         Ok(())
     }
@@ -75,7 +82,7 @@ pub trait Scheduler<'s>: Debug + Default + Named + Current<'s> + Listener {
     ///
     /// # Errors
     /// see `try_timeout_schedule`.
-    fn try_timed_schedule(&mut self, dur: std::time::Duration) -> std::io::Result<u64> {
+    fn try_timed_schedule(&self, dur: std::time::Duration) -> std::io::Result<u64> {
         self.try_timeout_schedule(open_coroutine_timer::get_timeout_time(dur))
     }
 
@@ -88,7 +95,10 @@ pub trait Scheduler<'s>: Debug + Default + Named + Current<'s> + Listener {
     ///
     /// # Errors
     /// if change to ready fails.
-    fn try_timeout_schedule(&mut self, timeout_time: u64) -> std::io::Result<u64>;
+    fn try_timeout_schedule(&self, timeout_time: u64) -> std::io::Result<u64>;
+
+    /// Attempt to obtain coroutine result with the given `co_name`.
+    fn try_get_coroutine_result(&self, co_name: &str) -> Option<Result<Option<usize>, &str>>;
 
     /// Returns `true` if the ready queue, suspend queue, and syscall queue are all empty.
     fn is_empty(&self) -> bool {
@@ -114,10 +124,10 @@ pub trait HasScheduler<'s> {
 
     fn submit_coroutine(
         &self,
-        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) + UnwindSafe + 's,
+        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) -> Option<usize> + UnwindSafe + 's,
         stack_size: Option<usize>,
-    ) -> std::io::Result<()> {
-        self.scheduler().submit_coroutine(f, stack_size)
+    ) -> std::io::Result<JoinHandleImpl<'s>> {
+        self.scheduler().submit_co(f, stack_size)
     }
 
     fn try_resume(&self, co_name: &'s str) -> std::io::Result<()> {
@@ -135,6 +145,10 @@ pub trait HasScheduler<'s> {
 
     fn try_timeout_schedule(&mut self, timeout_time: u64) -> std::io::Result<u64> {
         self.scheduler_mut().try_timeout_schedule(timeout_time)
+    }
+
+    fn try_get_coroutine_result(&'s self, co_name: &str) -> Option<Result<Option<usize>, &str>> {
+        self.scheduler().try_get_coroutine_result(co_name)
     }
 
     fn is_empty(&self) -> bool {
@@ -156,9 +170,10 @@ pub struct SchedulerImpl<'s> {
     name: String,
     stack_size: AtomicUsize,
     ready: LocalQueue<'s, SchedulableCoroutine<'s>>,
-    suspend: TimerList<SchedulableCoroutine<'s>>,
+    suspend: RefCell<TimerList<SchedulableCoroutine<'s>>>,
     syscall: DashMap<&'s str, SchedulableCoroutine<'s>>,
-    syscall_suspend: TimerList<&'s str>,
+    syscall_suspend: RefCell<TimerList<&'s str>>,
+    results: DashMap<&'s str, Result<Option<usize>, &'static str>>,
     listeners: VecDeque<Box<dyn Listener + 's>>,
 }
 
@@ -170,66 +185,68 @@ impl SchedulerImpl<'_> {
             name,
             stack_size: AtomicUsize::new(stack_size),
             ready: LocalQueue::default(),
-            suspend: TimerList::default(),
+            suspend: RefCell::default(),
             syscall: DashMap::default(),
-            syscall_suspend: TimerList::default(),
+            syscall_suspend: RefCell::default(),
+            results: DashMap::default(),
             listeners: VecDeque::default(),
         };
         scheduler.init();
         scheduler
     }
 
-    fn check_ready(&mut self) -> std::io::Result<()> {
+    fn check_ready(&self) -> std::io::Result<()> {
         // Check if the elements in the suspend queue are ready
-        for _ in 0..self.suspend.entry_len() {
-            if let Some((exec_time, _)) = self.suspend.front() {
-                if open_coroutine_timer::now() < *exec_time {
-                    break;
-                }
-                if let Some((_, mut entry)) = self.suspend.pop_front() {
-                    while !entry.is_empty() {
-                        if let Some(coroutine) = entry.pop_front() {
-                            if let Err(e) = coroutine.ready() {
-                                Self::clean_current();
-                                return Err(e);
+        loop {
+            if let Ok(mut suspend) = self.suspend.try_borrow_mut() {
+                for _ in 0..suspend.entry_len() {
+                    if let Some((exec_time, _)) = suspend.front() {
+                        if open_coroutine_timer::now() < *exec_time {
+                            break;
+                        }
+                        if let Some((_, mut entry)) = suspend.pop_front() {
+                            while let Some(coroutine) = entry.pop_front() {
+                                coroutine.ready()?;
+                                self.ready.push_back(coroutine);
                             }
-                            self.ready.push_back(coroutine);
                         }
                     }
                 }
+                break;
             }
         }
         // Check if the elements in the syscall suspend queue are ready
-        for _ in 0..self.syscall_suspend.entry_len() {
-            if let Some((exec_time, _)) = self.syscall_suspend.front() {
-                if open_coroutine_timer::now() < *exec_time {
-                    break;
-                }
-                if let Some((_, mut entry)) = self.syscall_suspend.pop_front() {
-                    while !entry.is_empty() {
-                        if let Some(co_name) = entry.pop_front() {
-                            if let Some(r) = self.syscall.remove(&co_name) {
-                                let coroutine = r.1;
-                                match coroutine.state() {
-                                    CoroutineState::SystemCall(val, syscall, state) => {
-                                        if let SyscallState::Suspend(_) = state {
-                                            if let Err(e) = coroutine.syscall(
-                                                val,
-                                                syscall,
-                                                SyscallState::Timeout,
-                                            ) {
-                                                Self::clean_current();
-                                                return Err(e);
+        loop {
+            if let Ok(mut syscall_suspend) = self.syscall_suspend.try_borrow_mut() {
+                for _ in 0..syscall_suspend.entry_len() {
+                    if let Some((exec_time, _)) = syscall_suspend.front() {
+                        if open_coroutine_timer::now() < *exec_time {
+                            break;
+                        }
+                        if let Some((_, mut entry)) = syscall_suspend.pop_front() {
+                            while let Some(co_name) = entry.pop_front() {
+                                if let Some((_, coroutine)) = self.syscall.remove(&co_name) {
+                                    match coroutine.state() {
+                                        CoroutineState::SystemCall(val, syscall, state) => {
+                                            if let SyscallState::Suspend(_) = state {
+                                                coroutine.syscall(
+                                                    val,
+                                                    syscall,
+                                                    SyscallState::Timeout,
+                                                )?;
                                             }
+                                            self.ready.push_back(coroutine);
                                         }
-                                        self.ready.push_back(coroutine);
+                                        _ => {
+                                            unreachable!("check_ready should never execute to here")
+                                        }
                                     }
-                                    _ => unreachable!("check_ready should never execute to here"),
                                 }
                             }
                         }
                     }
                 }
+                break;
             }
         }
         Ok(())
@@ -254,7 +271,7 @@ impl Drop for SchedulerImpl<'_> {
                 self.ready
             );
             assert!(
-                self.suspend.is_empty(),
+                self.suspend.get_mut().is_empty(),
                 "There are still coroutines to be carried out in the suspend queue:{:#?} !",
                 self.suspend
             );
@@ -282,8 +299,7 @@ impl Named for SchedulerImpl<'_> {
 }
 
 thread_local! {
-    static SCHEDULER: std::cell::RefCell<VecDeque<*const c_void>> =
-        std::cell::RefCell::new(VecDeque::new());
+    static SCHEDULER: RefCell<VecDeque<*const c_void>> = RefCell::new(VecDeque::new());
 }
 
 impl<'s> Current<'s> for SchedulerImpl<'s> {
@@ -317,7 +333,7 @@ impl<'s> Current<'s> for SchedulerImpl<'s> {
     }
 }
 
-impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
+impl<'s> Scheduler<'s, JoinHandleImpl<'s>> for SchedulerImpl<'s> {
     fn init(&mut self) {
         #[cfg(all(unix, feature = "preemptive-schedule"))]
         self.add_listener(crate::monitor::creator::MonitorTaskCreator::default());
@@ -327,20 +343,21 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
         self.stack_size.store(stack_size, Ordering::Release);
     }
 
-    fn submit_coroutine(
+    fn submit_co(
         &self,
-        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) + UnwindSafe + 's,
+        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) -> Option<usize> + UnwindSafe + 's,
         stack_size: Option<usize>,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<JoinHandleImpl<'s>> {
+        let co_name = format!("{}|{}", self.name, uuid::Uuid::new_v4());
         let coroutine = SchedulableCoroutine::new(
-            format!("{}|{}", self.name, uuid::Uuid::new_v4()),
+            co_name.clone(),
             f,
             stack_size.unwrap_or(self.stack_size.load(Ordering::Acquire)),
         )?;
         coroutine.ready()?;
         self.on_create(&coroutine);
         self.ready.push_back(coroutine);
-        Ok(())
+        Ok(JoinHandleImpl::new(self, &co_name))
     }
 
     fn try_resume(&self, co_name: &'s str) -> std::io::Result<()> {
@@ -357,7 +374,7 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
         Ok(())
     }
 
-    fn try_timeout_schedule(&mut self, timeout_time: u64) -> std::io::Result<u64> {
+    fn try_timeout_schedule(&self, timeout_time: u64) -> std::io::Result<u64> {
         Self::init_current(self);
         loop {
             let left_time = timeout_time.saturating_sub(open_coroutine_timer::now());
@@ -365,7 +382,10 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                 Self::clean_current();
                 return Ok(0);
             }
-            self.check_ready()?;
+            if let Err(e) = self.check_ready() {
+                Self::clean_current();
+                return Err(e);
+            }
             // schedule coroutines
             match self.ready.pop_front() {
                 None => {
@@ -382,7 +402,12 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                                     if timestamp <= open_coroutine_timer::now() {
                                         self.ready.push_back(coroutine);
                                     } else {
-                                        self.suspend.insert(timestamp, coroutine);
+                                        loop {
+                                            if let Ok(mut suspend) = self.suspend.try_borrow_mut() {
+                                                suspend.insert(timestamp, coroutine);
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
                                 CoroutineState::SystemCall((), syscall, state) => {
@@ -390,15 +415,34 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
                                     #[allow(box_pointers)]
                                     let co_name = Box::leak(Box::from(coroutine.get_name()));
                                     if let SyscallState::Suspend(timestamp) = state {
-                                        self.syscall_suspend.insert(timestamp, co_name);
+                                        loop {
+                                            if let Ok(mut syscall_suspend) =
+                                                self.syscall_suspend.try_borrow_mut()
+                                            {
+                                                syscall_suspend.insert(timestamp, co_name);
+                                                break;
+                                            }
+                                        }
                                     }
                                     _ = self.syscall.insert(co_name, coroutine);
                                 }
-                                CoroutineState::Complete(()) => {
-                                    self.on_complete(timeout_time, &coroutine);
+                                CoroutineState::Complete(result) => {
+                                    self.on_complete(timeout_time, &coroutine, result);
+                                    #[allow(box_pointers)]
+                                    let co_name = Box::leak(Box::from(coroutine.get_name()));
+                                    assert!(
+                                        self.results.insert(co_name, Ok(result)).is_none(),
+                                        "not consume result"
+                                    );
                                 }
                                 CoroutineState::Error(message) => {
                                     self.on_error(timeout_time, &coroutine, message);
+                                    #[allow(box_pointers)]
+                                    let co_name = Box::leak(Box::from(coroutine.get_name()));
+                                    assert!(
+                                        self.results.insert(co_name, Err(message)).is_none(),
+                                        "not consume result"
+                                    );
                                 }
                                 _ => {
                                     Self::clean_current();
@@ -419,8 +463,16 @@ impl<'s> Scheduler<'s> for SchedulerImpl<'s> {
         }
     }
 
+    fn try_get_coroutine_result(&self, co_name: &str) -> Option<Result<Option<usize>, &str>> {
+        self.results.remove(co_name).map(|r| r.1)
+    }
+
     fn size(&self) -> usize {
-        self.ready.len() + self.suspend.len() + self.syscall.len()
+        loop {
+            if let Ok(suspend) = self.suspend.try_borrow() {
+                return self.ready.len() + suspend.len() + self.syscall.len();
+            }
+        }
     }
 
     #[allow(box_pointers)]

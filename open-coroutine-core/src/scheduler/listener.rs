@@ -22,7 +22,7 @@ pub trait Listener: Debug {
 
     /// callback when a coroutine is completed.
     /// This will be called by `Scheduler` when a coroutine is completed.
-    fn on_complete(&self, _: u64, _: &SchedulableCoroutine) {}
+    fn on_complete(&self, _: u64, _: &SchedulableCoroutine, _: Option<usize>) {}
 
     /// callback when a coroutine is panic.
     /// This will be called by `Scheduler` when a coroutine is panic.
@@ -61,9 +61,14 @@ impl Listener for SchedulerImpl<'_> {
         }
     }
 
-    fn on_complete(&self, timeout_time: u64, coroutine: &SchedulableCoroutine) {
+    fn on_complete(
+        &self,
+        timeout_time: u64,
+        coroutine: &SchedulableCoroutine,
+        result: Option<usize>,
+    ) {
         for listener in &self.listeners {
-            listener.on_complete(timeout_time, coroutine);
+            listener.on_complete(timeout_time, coroutine, result);
         }
     }
 
@@ -88,8 +93,8 @@ mod tests {
         fn on_resume(&self, _: u64, coroutine: &SchedulableCoroutine) {
             println!("{:?}", coroutine);
         }
-        fn on_complete(&self, _: u64, coroutine: &SchedulableCoroutine) {
-            println!("{:?}", coroutine);
+        fn on_complete(&self, _: u64, coroutine: &SchedulableCoroutine, result: Option<usize>) {
+            println!("{:?} {:?}", coroutine, result);
         }
         fn on_error(&self, _: u64, coroutine: &SchedulableCoroutine, message: &str) {
             println!("{:?} {message}", coroutine);
@@ -100,8 +105,14 @@ mod tests {
     fn test_listener() -> std::io::Result<()> {
         let mut scheduler = SchedulerImpl::default();
         scheduler.add_listener(TestListener::default());
-        scheduler.submit_coroutine(|_, _| panic!("test panic, just ignore it"), None)?;
-        scheduler.submit_coroutine(|_, _| println!("2"), None)?;
+        _ = scheduler.submit_co(|_, _| panic!("test panic, just ignore it"), None)?;
+        _ = scheduler.submit_co(
+            |_, _| {
+                println!("2");
+                Some(1)
+            },
+            None,
+        )?;
         scheduler.try_schedule()
     }
 }
