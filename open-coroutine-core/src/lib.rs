@@ -61,6 +61,9 @@ pub mod common;
 /// Coroutine abstraction and impl.
 pub mod coroutine;
 
+/// Scheduler abstraction and impl.
+pub mod scheduler;
+
 /// net abstraction and impl.
 #[allow(
     missing_docs,

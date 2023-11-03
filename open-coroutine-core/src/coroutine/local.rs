@@ -41,10 +41,8 @@ impl CoroutineLocal {
     }
 }
 
-/// A trait implemented for coroutines.
 #[allow(missing_docs)]
 pub trait HasCoroutineLocal {
-    /// Get the coroutine local.
     fn local(&self) -> &CoroutineLocal;
 
     fn put<V>(&self, key: &str, val: V) -> Option<V> {
