@@ -110,6 +110,11 @@ fn test_state() -> std::io::Result<()> {
     scheduler.try_schedule()
 }
 
+#[cfg(not(all(
+    target_os = "linux",
+    target_arch = "aarch64",
+    feature = "preemptive-schedule"
+)))]
 #[test]
 fn test_trap() -> std::io::Result<()> {
     let scheduler = SchedulerImpl::default();

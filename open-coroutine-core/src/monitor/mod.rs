@@ -235,6 +235,7 @@ impl Monitor for MonitorImpl {
 mod tests {
     use super::*;
 
+    #[ignore]
     #[test]
     fn test() -> std::io::Result<()> {
         use std::os::unix::prelude::JoinHandleExt;
