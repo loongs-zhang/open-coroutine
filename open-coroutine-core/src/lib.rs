@@ -55,7 +55,7 @@ pub mod version;
 /// Constants.
 pub mod constants;
 
-/// Common traits.
+/// Common traits and impl.
 pub mod common;
 
 /// Coroutine abstraction and impl.
@@ -63,6 +63,9 @@ pub mod coroutine;
 
 /// Scheduler abstraction and impl.
 pub mod scheduler;
+
+/// Coroutine pool abstraction and impl.
+pub mod pool;
 
 /// net abstraction and impl.
 #[allow(

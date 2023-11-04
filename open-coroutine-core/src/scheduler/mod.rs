@@ -13,7 +13,7 @@ use std::ffi::c_void;
 use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 use std::panic::UnwindSafe;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// A type for Scheduler.
 pub type SchedulableCoroutine<'s> = CoroutineImpl<'s, (), (), Option<usize>>;
@@ -134,17 +134,17 @@ pub trait HasScheduler<'s> {
         self.scheduler().try_resume(co_name)
     }
 
-    fn try_schedule(&mut self) -> std::io::Result<()> {
+    fn try_schedule(&self) -> std::io::Result<()> {
         _ = self.try_timeout_schedule(std::time::Duration::MAX.as_secs())?;
         Ok(())
     }
 
-    fn try_timed_schedule(&mut self, dur: std::time::Duration) -> std::io::Result<u64> {
+    fn try_timed_schedule(&self, dur: std::time::Duration) -> std::io::Result<u64> {
         self.try_timeout_schedule(open_coroutine_timer::get_timeout_time(dur))
     }
 
-    fn try_timeout_schedule(&mut self, timeout_time: u64) -> std::io::Result<u64> {
-        self.scheduler_mut().try_timeout_schedule(timeout_time)
+    fn try_timeout_schedule(&self, timeout_time: u64) -> std::io::Result<u64> {
+        self.scheduler().try_timeout_schedule(timeout_time)
     }
 
     fn try_get_coroutine_result(&'s self, co_name: &str) -> Option<Result<Option<usize>, &str>> {
@@ -168,6 +168,7 @@ pub trait HasScheduler<'s> {
 #[derive(Debug)]
 pub struct SchedulerImpl<'s> {
     name: String,
+    scheduling: AtomicBool,
     stack_size: AtomicUsize,
     ready: LocalQueue<'s, SchedulableCoroutine<'s>>,
     suspend: RefCell<TimerList<SchedulableCoroutine<'s>>>,
@@ -183,6 +184,7 @@ impl SchedulerImpl<'_> {
     pub fn new(name: String, stack_size: usize) -> Self {
         let mut scheduler = SchedulerImpl {
             name,
+            scheduling: AtomicBool::new(false),
             stack_size: AtomicUsize::new(stack_size),
             ready: LocalQueue::default(),
             suspend: RefCell::default(),
@@ -375,21 +377,31 @@ impl<'s> Scheduler<'s, JoinHandleImpl<'s>> for SchedulerImpl<'s> {
     }
 
     fn try_timeout_schedule(&self, timeout_time: u64) -> std::io::Result<u64> {
+        if self
+            .scheduling
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Ok(timeout_time.saturating_sub(open_coroutine_timer::now()));
+        }
         Self::init_current(self);
         loop {
             let left_time = timeout_time.saturating_sub(open_coroutine_timer::now());
             if left_time == 0 {
                 Self::clean_current();
+                self.scheduling.store(false, Ordering::Release);
                 return Ok(0);
             }
             if let Err(e) = self.check_ready() {
                 Self::clean_current();
+                self.scheduling.store(false, Ordering::Release);
                 return Err(e);
             }
             // schedule coroutines
             match self.ready.pop_front() {
                 None => {
                     Self::clean_current();
+                    self.scheduling.store(false, Ordering::Release);
                     return Ok(left_time);
                 }
                 Some(mut coroutine) => {
@@ -446,6 +458,7 @@ impl<'s> Scheduler<'s, JoinHandleImpl<'s>> for SchedulerImpl<'s> {
                                 }
                                 _ => {
                                     Self::clean_current();
+                                    self.scheduling.store(false, Ordering::Release);
                                     return Err(Error::new(
                                         ErrorKind::Other,
                                         "try_timeout_schedule should never execute to here",
@@ -455,6 +468,7 @@ impl<'s> Scheduler<'s, JoinHandleImpl<'s>> for SchedulerImpl<'s> {
                         }
                         Err(e) => {
                             Self::clean_current();
+                            self.scheduling.store(false, Ordering::Release);
                             return Err(e);
                         }
                     };

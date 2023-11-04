@@ -1,3 +1,4 @@
+use crate::coroutine::suspender::SimpleDelaySuspender;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -51,6 +52,27 @@ pub trait Current<'c> {
 pub trait Blocker: Debug + Named {
     /// Block current thread for a while.
     fn block(&self, dur: Duration);
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
+pub struct DelayBlocker {}
+
+/// const `DELAY_BLOCKER_NAME`.
+pub const DELAY_BLOCKER_NAME: &str = "DelayBlocker";
+
+impl Named for DelayBlocker {
+    fn get_name(&self) -> &str {
+        DELAY_BLOCKER_NAME
+    }
+}
+
+impl Blocker for DelayBlocker {
+    fn block(&self, dur: Duration) {
+        if let Some(suspender) = crate::scheduler::SchedulableSuspender::current() {
+            suspender.delay(dur);
+        }
+    }
 }
 
 /// Join abstraction.
