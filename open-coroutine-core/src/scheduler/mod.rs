@@ -9,7 +9,6 @@ use open_coroutine_queue::LocalQueue;
 use open_coroutine_timer::TimerList;
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::ffi::c_void;
 use std::fmt::Debug;
 use std::io::{Error, ErrorKind};
 use std::panic::UnwindSafe;
@@ -26,6 +25,8 @@ pub mod listener;
 
 /// Join impl for scheduler.
 pub mod join;
+
+mod current;
 
 /// Has scheduler abstraction.
 pub mod has;
@@ -125,7 +126,7 @@ pub struct SchedulerImpl<'s> {
     suspend: RefCell<TimerList<SchedulableCoroutine<'s>>>,
     syscall: DashMap<&'s str, SchedulableCoroutine<'s>>,
     syscall_suspend: RefCell<TimerList<&'s str>>,
-    results: DashMap<&'s str, Result<Option<usize>, &'static str>>,
+    results: DashMap<&'s str, Result<Option<usize>, &'s str>>,
     listeners: VecDeque<Box<dyn Listener + 's>>,
 }
 
@@ -248,41 +249,6 @@ impl PartialEq for SchedulerImpl<'_> {
 impl Named for SchedulerImpl<'_> {
     fn get_name(&self) -> &str {
         &self.name
-    }
-}
-
-thread_local! {
-    static SCHEDULER: RefCell<VecDeque<*const c_void>> = RefCell::new(VecDeque::new());
-}
-
-impl<'s> Current<'s> for SchedulerImpl<'s> {
-    #[allow(clippy::ptr_as_ptr)]
-    fn init_current(current: &Self)
-    where
-        Self: Sized,
-    {
-        SCHEDULER.with(|s| {
-            s.borrow_mut()
-                .push_front(current as *const _ as *const c_void);
-        });
-    }
-
-    fn current() -> Option<&'s Self>
-    where
-        Self: Sized,
-    {
-        SCHEDULER.with(|s| {
-            s.borrow()
-                .front()
-                .map(|ptr| unsafe { &*(*ptr).cast::<SchedulerImpl<'s>>() })
-        })
-    }
-
-    fn clean_current()
-    where
-        Self: Sized,
-    {
-        SCHEDULER.with(|s| _ = s.borrow_mut().pop_front());
     }
 }
 

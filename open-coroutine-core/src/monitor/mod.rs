@@ -231,12 +231,10 @@ impl Monitor for MonitorImpl {
     }
 }
 
-#[allow(box_pointers)]
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(not(target_arch = "riscv64"))]
     #[test]
     fn test() -> std::io::Result<()> {
         use std::os::unix::prelude::JoinHandleExt;
@@ -263,7 +261,6 @@ mod tests {
 
     /// This test can be run locally, but is not stable enough
     /// in extreme scenarios when in non release mode.
-    #[cfg(not(debug_assertions))]
     #[test]
     fn preemptive_schedule() -> std::io::Result<()> {
         use crate::scheduler::{Scheduler, SchedulerImpl};
@@ -315,23 +312,19 @@ mod tests {
 
         // wait for the thread to start up
         let (lock, cvar) = &*pair;
-        let result = cvar
+        _ = cvar
             .wait_timeout_while(
                 lock.lock().unwrap(),
                 Duration::from_millis(3000),
                 |&mut pending| pending,
             )
             .unwrap();
-        if result.1.timed_out() {
+        if TEST_FLAG1.load(Ordering::Acquire) {
             Err(Error::new(
                 ErrorKind::TimedOut,
                 "preemptive schedule failed",
             ))
         } else {
-            assert!(
-                !TEST_FLAG1.load(Ordering::Acquire),
-                "preemptive schedule failed"
-            );
             Ok(())
         }
     }

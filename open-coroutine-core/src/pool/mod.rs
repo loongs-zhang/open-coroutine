@@ -29,6 +29,9 @@ mod creator;
 /// Has coroutine pool abstraction.
 pub mod has;
 
+#[cfg(test)]
+mod tests;
+
 /// The `TaskPool` abstraction.
 pub trait TaskPool<'p, Join: JoinHandle>:
     Debug + Default + RefUnwindSafe + Named + HasScheduler<'p>
@@ -417,6 +420,18 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     where
         'p: 'static,
     {
+        loop {
+            #[allow(box_pointers)]
+            if let Ok(blocker) = self.blocker.try_borrow() {
+                if crate::common::CONDVAR_BLOCKER_NAME == blocker.get_name() {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        "You need change to another blocker !",
+                    ));
+                }
+                break;
+            }
+        }
         assert_eq!(PoolState::Created, self.change_state(PoolState::Running));
         let arc = Arc::new(self);
         let consumer = arc.clone();
@@ -428,11 +443,11 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
                 loop {
                     match consumer.get_state() {
                         PoolState::Running => {
-                            _ = consumer.try_timed_schedule(Duration::from_millis(10));
+                            _ = consumer.try_timed_schedule_task(Duration::from_millis(10));
                         }
                         PoolState::Stopping(true) => {
                             while consumer.has_task() || consumer.get_running_size() > 0 {
-                                _ = consumer.try_timed_schedule(Duration::from_millis(10));
+                                _ = consumer.try_timed_schedule_task(Duration::from_millis(10));
                             }
                             let (lock, cvar) = &*consumer.stop.clone();
                             let mut pending = lock.lock().unwrap();
@@ -455,7 +470,7 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
         if PoolState::Stopped == state {
             return Ok(());
         }
-        _ = self.try_timed_schedule(Duration::ZERO)?;
+        _ = self.try_timed_schedule_task(Duration::ZERO)?;
         if PoolState::Running == state {
             assert_eq!(
                 PoolState::Running,
@@ -481,7 +496,7 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
         );
         let mut left = wait_time;
         loop {
-            let left_time = self.try_timed_schedule(left)?;
+            let left_time = self.try_timed_schedule_task(left)?;
             if !self.has_task() && self.get_running_size() == 0 {
                 assert_eq!(
                     PoolState::Stopping(false),

@@ -79,48 +79,6 @@ fn with_delay() -> std::io::Result<()> {
 }
 
 #[test]
-fn test_current() -> std::io::Result<()> {
-    let parent_name = "parent";
-    let scheduler = SchedulerImpl::new(
-        String::from(parent_name),
-        crate::constants::DEFAULT_STACK_SIZE,
-    );
-    _ = scheduler.submit_co(
-        |_, _| {
-            assert!(SchedulableCoroutine::current().is_some());
-            assert!(SchedulableSuspender::current().is_some());
-            assert_eq!(parent_name, SchedulerImpl::current().unwrap().get_name());
-            assert_eq!(parent_name, SchedulerImpl::current().unwrap().get_name());
-
-            let child_name = "child";
-            let scheduler = SchedulerImpl::new(
-                String::from(child_name),
-                crate::constants::DEFAULT_STACK_SIZE,
-            );
-            _ = scheduler
-                .submit_co(
-                    |_, _| {
-                        assert!(SchedulableCoroutine::current().is_some());
-                        assert!(SchedulableSuspender::current().is_some());
-                        assert_eq!(child_name, SchedulerImpl::current().unwrap().get_name());
-                        assert_eq!(child_name, SchedulerImpl::current().unwrap().get_name());
-                        None
-                    },
-                    None,
-                )
-                .unwrap();
-            scheduler.try_schedule().unwrap();
-
-            assert_eq!(parent_name, SchedulerImpl::current().unwrap().get_name());
-            assert_eq!(parent_name, SchedulerImpl::current().unwrap().get_name());
-            None
-        },
-        None,
-    )?;
-    scheduler.try_schedule()
-}
-
-#[test]
 fn test_state() -> std::io::Result<()> {
     let scheduler = SchedulerImpl::default();
     _ = scheduler.submit_co(
@@ -182,7 +140,7 @@ fn test_invalid_memory_reference() -> std::io::Result<()> {
         |_, _| {
             println!("Before invalid memory reference");
             // 没有加--release运行，会收到SIGABRT信号，不好处理，直接禁用测试
-            unsafe { _ = &*((1usize as *mut c_void).cast::<SchedulableCoroutine>()) };
+            unsafe { _ = &*((1usize as *mut std::ffi::c_void).cast::<SchedulableCoroutine>()) };
             println!("After invalid memory reference");
             None
         },
