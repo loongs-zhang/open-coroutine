@@ -27,6 +27,9 @@ pub mod listener;
 /// Join impl for scheduler.
 pub mod join;
 
+/// Has scheduler abstraction.
+pub mod has;
+
 #[cfg(test)]
 mod tests;
 
@@ -110,58 +113,6 @@ pub trait Scheduler<'s, Join: JoinHandle>:
 
     /// Add a listener to this scheduler.
     fn add_listener(&mut self, listener: impl Listener + 's);
-}
-
-#[allow(missing_docs, clippy::missing_errors_doc)]
-pub trait HasScheduler<'s> {
-    fn scheduler(&self) -> &SchedulerImpl<'s>;
-
-    fn scheduler_mut(&mut self) -> &mut SchedulerImpl<'s>;
-
-    fn set_stack_size(&self, stack_size: usize) {
-        self.scheduler().set_stack_size(stack_size);
-    }
-
-    fn submit_coroutine(
-        &self,
-        f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) -> Option<usize> + UnwindSafe + 's,
-        stack_size: Option<usize>,
-    ) -> std::io::Result<JoinHandleImpl<'s>> {
-        self.scheduler().submit_co(f, stack_size)
-    }
-
-    fn try_resume(&self, co_name: &'s str) -> std::io::Result<()> {
-        self.scheduler().try_resume(co_name)
-    }
-
-    fn try_schedule(&self) -> std::io::Result<()> {
-        _ = self.try_timeout_schedule(std::time::Duration::MAX.as_secs())?;
-        Ok(())
-    }
-
-    fn try_timed_schedule(&self, dur: std::time::Duration) -> std::io::Result<u64> {
-        self.try_timeout_schedule(open_coroutine_timer::get_timeout_time(dur))
-    }
-
-    fn try_timeout_schedule(&self, timeout_time: u64) -> std::io::Result<u64> {
-        self.scheduler().try_timeout_schedule(timeout_time)
-    }
-
-    fn try_get_coroutine_result(&'s self, co_name: &str) -> Option<Result<Option<usize>, &str>> {
-        self.scheduler().try_get_coroutine_result(co_name)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.size() == 0
-    }
-
-    fn size(&self) -> usize {
-        self.scheduler().size()
-    }
-
-    fn add_listener(&mut self, listener: impl Listener + 's) {
-        self.scheduler_mut().add_listener(listener);
-    }
 }
 
 #[allow(missing_docs, box_pointers)]

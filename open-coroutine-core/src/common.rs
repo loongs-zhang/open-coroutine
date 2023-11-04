@@ -75,6 +75,25 @@ impl Blocker for DelayBlocker {
     }
 }
 
+#[allow(missing_docs)]
+#[derive(Debug, Default)]
+pub struct CondvarBlocker(std::sync::Mutex<()>, std::sync::Condvar);
+
+/// const `CONDVAR_BLOCKER_NAME`.
+pub const CONDVAR_BLOCKER_NAME: &str = "CondvarBlocker";
+
+impl Named for CondvarBlocker {
+    fn get_name(&self) -> &str {
+        CONDVAR_BLOCKER_NAME
+    }
+}
+
+impl Blocker for CondvarBlocker {
+    fn block(&self, dur: Duration) {
+        _ = self.1.wait_timeout(self.0.lock().unwrap(), dur);
+    }
+}
+
 /// Join abstraction.
 pub trait JoinHandle {
     /// get the task name.
@@ -104,4 +123,21 @@ pub trait JoinHandle {
     /// # Errors
     /// if join failed.
     fn timeout_at_join(&self, timeout_time: u64) -> std::io::Result<Result<Option<usize>, &str>>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn condvar_blocker() {
+        let blocker = CondvarBlocker::default();
+        let time = open_coroutine_timer::now();
+        blocker.block(Duration::from_secs(1));
+        let cost = Duration::from_nanos(open_coroutine_timer::now().saturating_sub(time));
+        if Ordering::Less == cost.cmp(&Duration::from_secs(1)) {
+            crate::error!("condvar_blocker cost {cost:?}");
+        }
+    }
 }

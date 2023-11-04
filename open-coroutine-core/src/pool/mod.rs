@@ -4,7 +4,8 @@ use crate::coroutine::suspender::SimpleSuspender;
 use crate::pool::creator::CoroutineCreator;
 use crate::pool::join::JoinHandleImpl;
 use crate::pool::task::Task;
-use crate::scheduler::{HasScheduler, SchedulableCoroutine, SchedulerImpl};
+use crate::scheduler::has::HasScheduler;
+use crate::scheduler::{SchedulableCoroutine, SchedulerImpl};
 use crossbeam_deque::{Injector, Steal};
 use dashmap::DashMap;
 use std::cell::{Cell, RefCell, UnsafeCell};
@@ -24,6 +25,9 @@ pub mod join;
 mod current;
 
 mod creator;
+
+/// Has coroutine pool abstraction.
+pub mod has;
 
 /// The `TaskPool` abstraction.
 pub trait TaskPool<'p, Join: JoinHandle>:
@@ -60,11 +64,11 @@ pub trait TaskPool<'p, Join: JoinHandle>:
 
     /// Returns `true` if the task queue is empty.
     fn has_task(&self) -> bool {
-        self.len() != 0
+        self.count() != 0
     }
 
     /// Returns the number of tasks owned by this pool.
-    fn len(&self) -> usize;
+    fn count(&self) -> usize;
 
     /// Submit new task to this pool.
     ///
@@ -247,7 +251,7 @@ impl Drop for CoroutinePoolImpl<'_> {
                 self.get_running_size(),
                 "There are still tasks in progress !"
             );
-            assert_eq!(0, self.len(), "There are still tasks to be carried out !");
+            assert_eq!(0, self.count(), "There are still tasks to be carried out !");
         }
     }
 }
@@ -335,7 +339,7 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
         self.keep_alive_time.load(Ordering::Acquire)
     }
 
-    fn len(&self) -> usize {
+    fn count(&self) -> usize {
         self.task_queue.len()
     }
 
@@ -555,7 +559,7 @@ impl<'p> CoroutinePool<'p> for CoroutinePoolImpl<'p> {
             return Ok(());
         }
         let create_time = open_coroutine_timer::now();
-        _ = self.submit_coroutine(
+        _ = self.submit_co(
             move |suspender, ()| {
                 loop {
                     let pool = Self::current().expect("current pool not found");

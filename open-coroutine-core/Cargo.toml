@@ -69,6 +69,10 @@ default = ["full"]
 boost = ["context"]
 korosensei = ["corosensei", "nix/pthread"]
 
+# Provide preemptive scheduling implementation.
+# Enable for default.
+preemptive-schedule = ["korosensei"]
+
 # Provide net API abstraction and implementation.
 net = ["korosensei", "num_cpus", "once_cell", "crossbeam-utils", "mio", "polling"]
 
@@ -81,4 +85,4 @@ io_uring = ["net", "io-uring"]
 logs = ["log", "simplelog"]
 
 # Enable all features.
-full = ["io_uring", "logs"]
+full = ["preemptive-schedule", "io_uring", "logs"]
