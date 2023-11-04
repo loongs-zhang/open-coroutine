@@ -95,7 +95,10 @@ impl Blocker for CondvarBlocker {
 }
 
 /// Join abstraction.
-pub trait JoinHandle {
+pub trait JoinHandle<T> {
+    /// create `JoinHandle` instance.
+    fn new(t: *const T, name: &str) -> Self;
+
     /// get the task name.
     ///
     /// # Errors

@@ -33,9 +33,7 @@ pub mod has;
 mod tests;
 
 /// The `TaskPool` abstraction.
-pub trait TaskPool<'p, Join: JoinHandle>:
-    Debug + Default + RefUnwindSafe + Named + HasScheduler<'p>
-{
+pub trait TaskPool<'p>: Debug + Default + RefUnwindSafe + Named + HasScheduler<'p> {
     /// Get the state of this pool.
     fn get_state(&self) -> PoolState;
 
@@ -73,41 +71,61 @@ pub trait TaskPool<'p, Join: JoinHandle>:
     /// Returns the number of tasks owned by this pool.
     fn count(&self) -> usize;
 
-    /// Submit new task to this pool.
-    ///
-    /// Allow multiple threads to concurrently submit task to the pool,
-    /// but only allow one thread to execute scheduling.
-    fn submit_raw(&self, task: Task<'p>) -> Join;
+    /// pop a task
+    fn pop(&self) -> Option<Task<'p>>;
 
+    /// Change the blocker in this pool.
+    fn change_blocker(&self, blocker: impl Blocker + 'p) -> Box<dyn Blocker>
+    where
+        'p: 'static;
+}
+
+/// The `SubmittableTaskPool` abstraction.
+pub trait SubmittableTaskPool<'p, Join: JoinHandle<Self>>: TaskPool<'p> {
     /// Submit a new task to this pool.
     ///
     /// Allow multiple threads to concurrently submit task to the pool,
     /// but only allow one thread to execute scheduling.
+    #[allow(box_pointers)]
     fn submit(
         &self,
         name: Option<String>,
         func: impl FnOnce(Option<usize>) -> Option<usize> + UnwindSafe + 'p,
         param: Option<usize>,
     ) -> Join {
-        self.submit_raw(Task::new(
-            name.unwrap_or(format!("{}|{}", self.get_name(), uuid::Uuid::new_v4())),
-            func,
-            param,
-        ))
+        let name = name.unwrap_or(format!("{}|{}", self.get_name(), uuid::Uuid::new_v4()));
+        self.submit_raw(Task::new(name.clone(), func, param));
+        Join::new(self, &name)
     }
 
-    /// Use the given `task_name` to obtain task results, and if no results are found,
-    /// block the current thread for `wait_time`.
+    /// Submit new task to this pool.
+    ///
+    /// Allow multiple threads to concurrently submit task to the pool,
+    /// but only allow one thread to execute scheduling.
+    fn submit_raw(&self, task: Task<'p>);
+}
+
+/// The `AutoConsumableTaskPool` abstraction.
+pub trait AutoConsumableTaskPool<'p, Join: JoinHandle<Self>>:
+    SubmittableTaskPool<'p, Join>
+{
+    /// Start an additional thread to consume tasks.
     ///
     /// # Errors
-    /// if timeout
-    #[allow(clippy::type_complexity)]
-    fn wait_result(
-        &self,
-        task_name: &str,
-        wait_time: Duration,
-    ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>>;
+    /// if create the additional thread failed.
+    fn start(self) -> std::io::Result<Arc<Self>>
+    where
+        'p: 'static;
 
+    /// Stop this pool.
+    ///
+    /// # Errors
+    /// if timeout.
+    fn stop(&self, wait_time: Duration) -> std::io::Result<()>;
+}
+
+/// The `WaitableTaskPool` abstraction.
+pub trait WaitableTaskPool<'p, Join: JoinHandle<Self>>: SubmittableTaskPool<'p, Join> {
     /// Submit a new task to this pool and wait for the task to complete.
     ///
     /// # Errors
@@ -124,31 +142,23 @@ pub trait TaskPool<'p, Join: JoinHandle>:
         self.wait_result(join.get_name()?, wait_time)
     }
 
-    /// pop a task
-    fn pop(&self) -> Option<Task<'p>>;
-
-    /// Change the blocker in this pool.
-    fn change_blocker(&self, blocker: impl Blocker + 'p) -> Box<dyn Blocker>
-    where
-        'p: 'static;
-
-    /// Start an additional thread to consume tasks.
+    /// Use the given `task_name` to obtain task results, and if no results are found,
+    /// block the current thread for `wait_time`.
     ///
     /// # Errors
-    /// if create the additional thread failed.
-    fn start(self) -> std::io::Result<Arc<Self>>
-    where
-        'p: 'static;
-
-    /// Stop this pool.
-    ///
-    /// # Errors
-    /// if timeout.
-    fn stop(&self, wait_time: Duration) -> std::io::Result<()>;
+    /// if timeout
+    #[allow(clippy::type_complexity)]
+    fn wait_result(
+        &self,
+        task_name: &str,
+        wait_time: Duration,
+    ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>>;
 }
 
 /// The `CoroutinePool` abstraction.
-pub trait CoroutinePool<'p>: Current<'p> + TaskPool<'p, JoinHandleImpl<'p>> {
+pub trait CoroutinePool<'p, Join: JoinHandle<Self>>:
+    Current<'p> + AutoConsumableTaskPool<'p, Join> + WaitableTaskPool<'p, Join>
+{
     /// Create a new `CoroutinePool` instance.
     fn new(
         name: String,
@@ -280,12 +290,6 @@ impl Default for CoroutinePoolImpl<'_> {
     }
 }
 
-impl Named for CoroutinePoolImpl<'_> {
-    fn get_name(&self) -> &str {
-        unsafe { (*self.workers.get()).get_name() }
-    }
-}
-
 impl Eq for CoroutinePoolImpl<'_> {}
 
 impl PartialEq for CoroutinePoolImpl<'_> {
@@ -304,7 +308,7 @@ impl<'p> HasScheduler<'p> for CoroutinePoolImpl<'p> {
     }
 }
 
-impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
+impl<'p> TaskPool<'p> for CoroutinePoolImpl<'p> {
     fn get_state(&self) -> PoolState {
         self.state.get()
     }
@@ -346,54 +350,6 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
         self.task_queue.len()
     }
 
-    #[allow(box_pointers)]
-    fn wait_result(
-        &self,
-        task_name: &str,
-        wait_time: Duration,
-    ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>> {
-        let key = Box::leak(Box::from(task_name));
-        if let Some(r) = self.try_get_task_result(key) {
-            _ = self.waits.remove(key);
-            return Ok(Some(r));
-        }
-        if SchedulableCoroutine::current().is_some() {
-            let timeout_time = open_coroutine_timer::get_timeout_time(wait_time);
-            loop {
-                _ = self.try_run();
-                if let Some(r) = self.try_get_task_result(key) {
-                    return Ok(Some(r));
-                }
-                if timeout_time.saturating_sub(open_coroutine_timer::now()) == 0 {
-                    return Err(Error::new(ErrorKind::TimedOut, "wait timeout"));
-                }
-            }
-        }
-        let arc = if let Some(arc) = self.waits.get(key) {
-            arc.clone()
-        } else {
-            let arc = Arc::new((Mutex::new(true), Condvar::new()));
-            assert!(self.waits.insert(key, arc.clone()).is_none());
-            arc
-        };
-        let (lock, cvar) = &*arc;
-        _ = cvar
-            .wait_timeout_while(lock.lock().unwrap(), wait_time, |&mut pending| pending)
-            .unwrap();
-        if let Some(r) = self.try_get_task_result(key) {
-            assert!(self.waits.remove(key).is_some());
-            return Ok(Some(r));
-        }
-        Err(Error::new(ErrorKind::TimedOut, "wait timeout"))
-    }
-
-    #[allow(box_pointers)]
-    fn submit_raw(&self, task: Task<'p>) -> JoinHandleImpl<'p> {
-        let task_name = Box::leak(Box::from(task.get_name()));
-        self.task_queue.push(task);
-        JoinHandleImpl::new(self, task_name)
-    }
-
     fn pop(&self) -> Option<Task<'p>> {
         // Fast path, if len == 0, then there are no values
         if !self.has_task() {
@@ -415,7 +371,15 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     {
         self.blocker.replace(Box::new(blocker))
     }
+}
 
+impl<'p> SubmittableTaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
+    fn submit_raw(&self, task: Task<'p>) {
+        self.task_queue.push(task);
+    }
+}
+
+impl<'p> AutoConsumableTaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     fn start(self) -> std::io::Result<Arc<Self>>
     where
         'p: 'static,
@@ -512,7 +476,50 @@ impl<'p> TaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     }
 }
 
-impl<'p> CoroutinePool<'p> for CoroutinePoolImpl<'p> {
+impl<'p> WaitableTaskPool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
+    #[allow(box_pointers)]
+    fn wait_result(
+        &self,
+        task_name: &str,
+        wait_time: Duration,
+    ) -> std::io::Result<Option<(String, Result<Option<usize>, &str>)>> {
+        let key = Box::leak(Box::from(task_name));
+        if let Some(r) = self.try_get_task_result(key) {
+            _ = self.waits.remove(key);
+            return Ok(Some(r));
+        }
+        if SchedulableCoroutine::current().is_some() {
+            let timeout_time = open_coroutine_timer::get_timeout_time(wait_time);
+            loop {
+                _ = self.try_run();
+                if let Some(r) = self.try_get_task_result(key) {
+                    return Ok(Some(r));
+                }
+                if timeout_time.saturating_sub(open_coroutine_timer::now()) == 0 {
+                    return Err(Error::new(ErrorKind::TimedOut, "wait timeout"));
+                }
+            }
+        }
+        let arc = if let Some(arc) = self.waits.get(key) {
+            arc.clone()
+        } else {
+            let arc = Arc::new((Mutex::new(true), Condvar::new()));
+            assert!(self.waits.insert(key, arc.clone()).is_none());
+            arc
+        };
+        let (lock, cvar) = &*arc;
+        _ = cvar
+            .wait_timeout_while(lock.lock().unwrap(), wait_time, |&mut pending| pending)
+            .unwrap();
+        if let Some(r) = self.try_get_task_result(key) {
+            assert!(self.waits.remove(key).is_some());
+            return Ok(Some(r));
+        }
+        Err(Error::new(ErrorKind::TimedOut, "wait timeout"))
+    }
+}
+
+impl<'p> CoroutinePool<'p, JoinHandleImpl<'p>> for CoroutinePoolImpl<'p> {
     #[allow(box_pointers)]
     fn new(
         name: String,

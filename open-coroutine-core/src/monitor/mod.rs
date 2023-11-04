@@ -4,7 +4,7 @@ use crate::common::{Blocker, Current};
 use crate::constants::CoroutineState;
 use crate::coroutine::suspender::SimpleSuspender;
 use crate::coroutine::StateCoroutine;
-use crate::pool::{CoroutinePool, CoroutinePoolImpl, TaskPool};
+use crate::pool::{AutoConsumableTaskPool, CoroutinePool, CoroutinePoolImpl, SubmittableTaskPool};
 use crate::scheduler::{SchedulableCoroutine, SchedulableSuspender};
 use nix::sys::pthread::{pthread_kill, pthread_self, Pthread};
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};

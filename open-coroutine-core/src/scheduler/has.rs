@@ -1,3 +1,4 @@
+use crate::common::Named;
 use crate::coroutine::suspender::Suspender;
 use crate::scheduler::join::JoinHandleImpl;
 use crate::scheduler::listener::Listener;
@@ -39,10 +40,6 @@ pub trait HasScheduler<'s> {
         self.scheduler().try_timeout_schedule(timeout_time)
     }
 
-    fn try_get_coroutine_result(&'s self, co_name: &str) -> Option<Result<Option<usize>, &str>> {
-        self.scheduler().try_get_coroutine_result(co_name)
-    }
-
     fn is_empty(&self) -> bool {
         self.size() == 0
     }
@@ -53,5 +50,12 @@ pub trait HasScheduler<'s> {
 
     fn add_listener(&mut self, listener: impl Listener + 's) {
         self.scheduler_mut().add_listener(listener);
+    }
+}
+
+impl<'s, HasSchedulerImpl: HasScheduler<'s>> Named for HasSchedulerImpl {
+    fn get_name(&self) -> &str {
+        #[allow(box_pointers)]
+        Box::leak(Box::from(self.scheduler().get_name()))
     }
 }

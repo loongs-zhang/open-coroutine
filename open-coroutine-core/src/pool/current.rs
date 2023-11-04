@@ -42,7 +42,7 @@ mod tests {
     use super::*;
     use crate::common::Named;
     use crate::constants::DEFAULT_STACK_SIZE;
-    use crate::pool::{CoroutinePool, TaskPool};
+    use crate::pool::{CoroutinePool, SubmittableTaskPool};
     use crate::scheduler::{SchedulableCoroutine, SchedulableSuspender, SchedulerImpl};
 
     #[test]

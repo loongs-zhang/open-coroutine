@@ -1,5 +1,5 @@
 use crate::common::JoinHandle;
-use crate::pool::{CoroutinePoolImpl, TaskPool};
+use crate::pool::{CoroutinePoolImpl, WaitableTaskPool};
 use std::ffi::{c_char, CStr, CString};
 use std::io::{Error, ErrorKind};
 use std::time::Duration;
@@ -9,9 +9,9 @@ use std::time::Duration;
 #[derive(Debug)]
 pub struct JoinHandleImpl<'p>(*const CoroutinePoolImpl<'p>, *const c_char);
 
-impl<'p> JoinHandleImpl<'p> {
+impl<'p> JoinHandle<CoroutinePoolImpl<'p>> for JoinHandleImpl<'p> {
     #[allow(box_pointers)]
-    pub(crate) fn new(pool: *const CoroutinePoolImpl<'p>, name: &str) -> Self {
+    fn new(pool: *const CoroutinePoolImpl<'p>, name: &str) -> Self {
         let boxed: &'static mut CString = Box::leak(Box::from(
             CString::new(name).expect("init JoinHandle failed!"),
         ));
@@ -19,14 +19,6 @@ impl<'p> JoinHandleImpl<'p> {
         JoinHandleImpl(pool, cstr.as_ptr())
     }
 
-    /// create a error instance.
-    #[must_use]
-    pub fn error() -> Self {
-        Self::new(std::ptr::null(), "")
-    }
-}
-
-impl JoinHandle for JoinHandleImpl<'_> {
     fn get_name(&self) -> std::io::Result<&str> {
         unsafe { CStr::from_ptr(self.1) }
             .to_str()
@@ -51,7 +43,7 @@ impl JoinHandle for JoinHandleImpl<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pool::CoroutinePool;
+    use crate::pool::{CoroutinePool, SubmittableTaskPool};
     use std::sync::{Arc, Condvar, Mutex};
 
     #[test]
