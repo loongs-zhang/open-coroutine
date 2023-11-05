@@ -7,7 +7,7 @@
     // elided_lifetimes_in_paths, // allow anonymous lifetime
     missing_copy_implementations,
     missing_debug_implementations,
-    missing_docs,
+    // missing_docs,
     single_use_lifetimes,
     // trivial_casts,
     trivial_numeric_casts,
@@ -45,50 +45,31 @@
 
 //! see `https://github.com/acl-dev/open-coroutine`
 
-#[allow(missing_docs)]
-pub mod log;
+pub use open_coroutine_core::net::config::Config;
+pub use open_coroutine_macros::*;
 
-/// Get the kernel version.
-#[cfg(target_os = "linux")]
-pub mod version;
+pub mod task;
 
-/// Constants.
-pub mod constants;
+extern "C" {
+    fn init_config(config: Config);
 
-/// Common traits and impl.
-#[allow(dead_code)]
-pub mod common;
+    fn shutdowns();
+}
 
-/// Coroutine abstraction and impl.
-pub mod coroutine;
+pub fn init(config: Config) {
+    unsafe { init_config(config) };
+}
 
-/// Scheduler abstraction and impl.
-pub mod scheduler;
+pub fn shutdown() {
+    unsafe { shutdowns() };
+}
 
-/// Coroutine pool abstraction and impl.
-pub mod pool;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Monitor abstraction and impl.
-#[cfg(all(unix, feature = "preemptive-schedule"))]
-pub mod monitor;
-
-/// net abstraction and impl.
-#[allow(
-    missing_docs,
-    box_pointers,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc
-)]
-#[cfg(feature = "net")]
-pub mod net;
-
-#[allow(
-    unused_imports,
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    missing_docs,
-    clippy::cast_sign_loss,
-    clippy::not_unsafe_ptr_arg_deref
-)]
-#[cfg(all(unix, feature = "net"))]
-pub mod syscall;
+    #[test]
+    fn test_link() {
+        init(Config::default());
+    }
+}

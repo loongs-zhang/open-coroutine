@@ -156,9 +156,6 @@ impl Operator<'_> {
         impl_if_support!(support_io_uring(), {
             let mut sq = unsafe { self.inner.submission_shared() };
             let mut cq = unsafe { self.inner.completion_shared() };
-            if sq.is_empty() {
-                return Ok((0, cq));
-            }
             self.timeout_add(0, timeout)?;
             let count = match self.inner.submit_and_wait(1) {
                 Ok(count) => count,

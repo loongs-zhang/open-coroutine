@@ -359,9 +359,9 @@ macro_rules! wrap_result {
                 }
                 let (lock, cvar) = &*arc;
                 let syscall_result = cvar
-                .wait_while(lock.lock().unwrap(), |&mut pending| pending.is_none())
-                    .unwrap()
-                    .unwrap();
+                    .wait_while(lock.lock().unwrap(), |&mut pending| pending.is_none())
+                        .unwrap()
+                        .unwrap();
                 syscall_result as _
             })
     }};

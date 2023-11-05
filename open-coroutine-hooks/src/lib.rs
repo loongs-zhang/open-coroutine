@@ -7,7 +7,7 @@
     // elided_lifetimes_in_paths, // allow anonymous lifetime
     missing_copy_implementations,
     missing_debug_implementations,
-    missing_docs,
+    // missing_docs,
     single_use_lifetimes,
     // trivial_casts,
     trivial_numeric_casts,
@@ -43,52 +43,33 @@
     clippy::separated_literal_suffix, // conflicts with clippy::unseparated_literal_suffix
 )]
 
-//! see `https://github.com/acl-dev/open-coroutine`
+use open_coroutine_core::net::config::Config;
+use open_coroutine_core::net::core::EventLoops;
 
-#[allow(missing_docs)]
-pub mod log;
+#[no_mangle]
+pub extern "C" fn init_config(config: Config) {
+    //一方面保证hook的函数能够被重定向到(防止压根不调用coroutine_crate的情况)
+    //另一方面初始化EventLoop配置
+    _ = Config::get_instance()
+        .set_event_loop_size(config.get_event_loop_size())
+        .set_stack_size(config.get_stack_size())
+        .set_min_size(config.get_min_size())
+        .set_max_size(config.get_max_size())
+        .set_keep_alive_time(config.get_keep_alive_time());
+    open_coroutine_core::warn!("open-coroutine inited with {config:#?}");
+}
 
-/// Get the kernel version.
-#[cfg(target_os = "linux")]
-pub mod version;
+#[no_mangle]
+pub extern "C" fn shutdowns() {
+    EventLoops::stop();
+}
 
-/// Constants.
-pub mod constants;
+pub mod task;
 
-/// Common traits and impl.
-#[allow(dead_code)]
-pub mod common;
+#[allow(dead_code, clippy::not_unsafe_ptr_arg_deref, clippy::similar_names)]
+#[cfg(unix)]
+pub mod unix;
 
-/// Coroutine abstraction and impl.
-pub mod coroutine;
-
-/// Scheduler abstraction and impl.
-pub mod scheduler;
-
-/// Coroutine pool abstraction and impl.
-pub mod pool;
-
-/// Monitor abstraction and impl.
-#[cfg(all(unix, feature = "preemptive-schedule"))]
-pub mod monitor;
-
-/// net abstraction and impl.
-#[allow(
-    missing_docs,
-    box_pointers,
-    clippy::missing_errors_doc,
-    clippy::missing_panics_doc
-)]
-#[cfg(feature = "net")]
-pub mod net;
-
-#[allow(
-    unused_imports,
-    clippy::too_many_arguments,
-    clippy::similar_names,
-    missing_docs,
-    clippy::cast_sign_loss,
-    clippy::not_unsafe_ptr_arg_deref
-)]
-#[cfg(all(unix, feature = "net"))]
-pub mod syscall;
+#[allow(dead_code, clippy::not_unsafe_ptr_arg_deref, clippy::similar_names)]
+#[cfg(all(windows, nightly))]
+mod windows;

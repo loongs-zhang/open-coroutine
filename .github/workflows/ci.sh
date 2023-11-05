@@ -29,11 +29,20 @@ cd "${PROJECT_DIR}"/open-coroutine-queue
 cd "${PROJECT_DIR}"/open-coroutine-core
 "${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei
 "${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei --release
-"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release
-"${CARGO}" run --target "${TARGET}" --example preemptive --no-default-features --features preemptive-schedule --release
 "${CARGO}" test --target "${TARGET}" --no-default-features --features net
 "${CARGO}" test --target "${TARGET}" --no-default-features --features net --release
 if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ]; then
     "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring
     "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring --release
 fi
+"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release
+"${CARGO}" run --target "${TARGET}" --example preemptive --no-default-features --features preemptive-schedule --release
+
+# test examples
+cd "${PROJECT_DIR}"/examples
+"${CARGO}" run --target "${TARGET}" --example sleep_not_co --release
+"${CARGO}" run --target "${TARGET}" --example sleep_co --release
+"${CARGO}" run --target "${TARGET}" --example socket_not_co --release
+"${CARGO}" run --target "${TARGET}" --example socket_co_server --release
+"${CARGO}" run --target "${TARGET}" --example socket_co_client --release
+"${CARGO}" run --target "${TARGET}" --example socket_co --release

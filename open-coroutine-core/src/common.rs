@@ -94,6 +94,67 @@ impl Blocker for CondvarBlocker {
     }
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "net")] {
+        use crate::net::event_loop::{EventLoop, EventLoopImpl};
+        use std::sync::Arc;
+
+        #[allow(missing_docs)]
+        #[derive(Debug)]
+        pub struct NetBlocker(pub Arc<EventLoopImpl<'static>>);
+
+        /// const `NET_BLOCKER_NAME`.
+        pub const NET_BLOCKER_NAME: &str = "NetBlocker";
+
+        impl Named for NetBlocker {
+            fn get_name(&self) -> &str {
+                NET_BLOCKER_NAME
+            }
+        }
+
+        impl Blocker for NetBlocker {
+            fn block(&self, dur: Duration) {
+                _ = self.0.wait_event(Some(dur));
+            }
+        }
+    }
+}
+
+cfg_if::cfg_if! {
+    if #[cfg(all(unix, feature = "net", feature = "preemptive-schedule"))] {
+        use crate::net::core::EventLoops;
+        use crate::pool::TaskPool;
+
+        #[allow(missing_docs)]
+        #[derive(Debug)]
+        pub(crate) struct MonitorNetBlocker(Arc<EventLoopImpl<'static>>);
+
+        impl MonitorNetBlocker {
+            pub(crate) fn new() -> Self {
+                MonitorNetBlocker(EventLoops::monitor().clone())
+            }
+        }
+
+        /// const `MONITOR_NET_BLOCKER_NAME`.
+        pub const MONITOR_NET_BLOCKER_NAME: &str = "MonitorNetBlocker";
+
+        impl Named for MonitorNetBlocker {
+            fn get_name(&self) -> &str {
+                MONITOR_NET_BLOCKER_NAME
+            }
+        }
+
+        impl Blocker for MonitorNetBlocker {
+            fn block(&self, dur: Duration) {
+                _ = self.0.wait_just(Some(dur));
+                while let Some(task) = self.0.pop() {
+                    EventLoops::submit_raw(task);
+                }
+            }
+        }
+    }
+}
+
 /// Join abstraction.
 pub trait JoinHandle<T> {
     /// create `JoinHandle` instance.

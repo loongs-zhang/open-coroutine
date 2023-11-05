@@ -12,3 +12,7 @@ pub mod event_loop;
 
 /// Global config abstraction and impl.
 pub mod config;
+
+/// net core impl.
+#[allow(dead_code)]
+pub mod core;
