@@ -8,9 +8,9 @@ use std::io::{Error, ErrorKind};
 #[derive(Debug)]
 pub struct JoinHandleImpl<'p>(*const SchedulerImpl<'p>, *const c_char);
 
-impl<'p> JoinHandleImpl<'p> {
+impl<'p> JoinHandle<SchedulerImpl<'p>> for JoinHandleImpl<'p> {
     #[allow(box_pointers)]
-    pub(crate) fn new(pool: *const SchedulerImpl<'p>, name: &str) -> Self {
+    fn new(pool: *const SchedulerImpl<'p>, name: &str) -> Self {
         let boxed: &'static mut CString = Box::leak(Box::from(
             CString::new(name).expect("init JoinHandle failed!"),
         ));
@@ -18,14 +18,6 @@ impl<'p> JoinHandleImpl<'p> {
         JoinHandleImpl(pool, cstr.as_ptr())
     }
 
-    /// create a error instance.
-    #[must_use]
-    pub fn error() -> Self {
-        Self::new(std::ptr::null(), "")
-    }
-}
-
-impl JoinHandle for JoinHandleImpl<'_> {
     fn get_name(&self) -> std::io::Result<&str> {
         unsafe { CStr::from_ptr(self.1) }
             .to_str()

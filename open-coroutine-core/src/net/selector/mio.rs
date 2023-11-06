@@ -1,5 +1,5 @@
 use crate::net::selector::{
-    Selector, READABLE_RECORDS, READABLE_TOKEN_RECORDS, TOKEN_FD, WRITABLE_RECORDS,
+    Event, Selector, READABLE_RECORDS, READABLE_TOKEN_RECORDS, TOKEN_FD, WRITABLE_RECORDS,
     WRITABLE_TOKEN_RECORDS,
 };
 use mio::unix::SourceFd;
@@ -10,6 +10,12 @@ use std::fmt::Debug;
 use std::time::Duration;
 
 pub type Events = mio::Events;
+
+impl Event for &mio::event::Event {
+    fn get_token(&self) -> usize {
+        self.token().0
+    }
+}
 
 /// Event driven impl.
 #[derive(Debug)]

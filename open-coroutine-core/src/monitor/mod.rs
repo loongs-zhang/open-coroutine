@@ -4,7 +4,7 @@ use crate::common::{Blocker, Current};
 use crate::constants::CoroutineState;
 use crate::coroutine::suspender::SimpleSuspender;
 use crate::coroutine::StateCoroutine;
-use crate::pool::{CoroutinePool, CoroutinePoolImpl, TaskPool};
+use crate::pool::{AutoConsumableTaskPool, CoroutinePool, CoroutinePoolImpl, SubmittableTaskPool};
 use crate::scheduler::{SchedulableCoroutine, SchedulableSuspender};
 use nix::sys::pthread::{pthread_kill, pthread_self, Pthread};
 use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
@@ -81,13 +81,6 @@ impl Monitor for MonitorImpl {
         static MONITOR: AtomicUsize = AtomicUsize::new(0);
         let mut ret = MONITOR.load(Ordering::Relaxed);
         if ret == 0 {
-            // cfg_if::cfg_if! {
-            //     if #[cfg(feature = "net")] {
-            //         let blocker = Box::new(crate::common::MonitorNetBlocker::new());
-            //     } else {
-            //         let blocker = Box::<crate::common::CondvarBlocker>::default();
-            //     }
-            // }
             let blocker = Box::<crate::common::CondvarBlocker>::default();
             let ptr: &'m mut MonitorImpl = Box::leak(Box::new(MonitorImpl {
                 cpu: crate::constants::MONITOR_CPU,

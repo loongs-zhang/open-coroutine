@@ -4,6 +4,8 @@ use std::ffi::c_int;
 use std::fmt::Debug;
 use std::time::Duration;
 
+pub mod has;
+
 #[cfg(windows)]
 mod polling;
 
@@ -47,6 +49,10 @@ pub trait Selector: Debug + Default {
     /// # Panics
     /// if clean failed.
     fn del_write_event(&self, fd: c_int) -> std::io::Result<()>;
+}
+
+pub trait Event {
+    fn get_token(&self) -> usize;
 }
 
 static TOKEN_FD: Lazy<DashMap<usize, c_int>> = Lazy::new(DashMap::new);

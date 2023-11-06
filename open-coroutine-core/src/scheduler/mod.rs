@@ -35,7 +35,7 @@ pub mod has;
 mod tests;
 
 /// A trait implemented for schedulers.
-pub trait Scheduler<'s, Join: JoinHandle>:
+pub trait Scheduler<'s, Join: JoinHandle<Self>>:
     Debug + Default + Named + Current<'s> + Listener
 {
     /// Extension points within the open-coroutine framework.
@@ -242,7 +242,7 @@ impl Eq for SchedulerImpl<'_> {}
 
 impl PartialEq for SchedulerImpl<'_> {
     fn eq(&self, other: &Self) -> bool {
-        self.name.eq(&other.name)
+        self.get_name().eq(other.get_name())
     }
 }
 
@@ -267,7 +267,7 @@ impl<'s> Scheduler<'s, JoinHandleImpl<'s>> for SchedulerImpl<'s> {
         f: impl FnOnce(&dyn Suspender<Resume = (), Yield = ()>, ()) -> Option<usize> + UnwindSafe + 's,
         stack_size: Option<usize>,
     ) -> std::io::Result<JoinHandleImpl<'s>> {
-        let co_name = format!("{}|{}", self.name, uuid::Uuid::new_v4());
+        let co_name = format!("{}|{}", self.get_name(), uuid::Uuid::new_v4());
         let coroutine = SchedulableCoroutine::new(
             co_name.clone(),
             f,

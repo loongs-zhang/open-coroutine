@@ -6,5 +6,8 @@ pub mod selector;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub mod operator;
 
+#[allow(missing_docs)]
+pub mod event_loop;
+
 /// Global config abstraction and impl.
 pub mod config;

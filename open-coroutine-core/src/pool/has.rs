@@ -1,13 +1,56 @@
-use crate::common::Blocker;
+use crate::common::{Blocker, Named};
 use crate::constants::PoolState;
 use crate::pool::task::Task;
 use crate::pool::{CoroutinePool, CoroutinePoolImpl, TaskPool};
+use crate::scheduler::has::HasScheduler;
+use crate::scheduler::SchedulerImpl;
+use std::fmt::Debug;
+use std::panic::RefUnwindSafe;
 use std::time::Duration;
 
 #[allow(missing_docs, clippy::missing_errors_doc)]
 pub trait HasCoroutinePool<'p> {
     fn pool(&self) -> &CoroutinePoolImpl<'p>;
 
+    fn pool_mut(&mut self) -> &mut CoroutinePoolImpl<'p>;
+
+    fn try_run(&self) -> Option<()> {
+        self.pool().try_run()
+    }
+
+    fn try_schedule_task(&self) -> std::io::Result<()> {
+        self.pool().try_schedule_task()
+    }
+
+    fn try_timed_schedule_task(&self, dur: Duration) -> std::io::Result<u64> {
+        self.pool().try_timed_schedule_task(dur)
+    }
+
+    fn try_timeout_schedule_task(&self, timeout_time: u64) -> std::io::Result<u64> {
+        self.pool().try_timeout_schedule_task(timeout_time)
+    }
+
+    fn try_get_task_result(
+        &'p self,
+        task_name: &str,
+    ) -> Option<(String, Result<Option<usize>, &str>)> {
+        self.pool().try_get_task_result(task_name)
+    }
+}
+
+impl<'p, HasCoroutinePoolImpl: HasCoroutinePool<'p>> HasScheduler<'p> for HasCoroutinePoolImpl {
+    fn scheduler(&self) -> &SchedulerImpl<'p> {
+        self.pool().scheduler()
+    }
+
+    fn scheduler_mut(&mut self) -> &mut SchedulerImpl<'p> {
+        self.pool_mut().scheduler_mut()
+    }
+}
+
+impl<'p, HasCoroutinePoolImpl: HasCoroutinePool<'p> + Debug + Default + RefUnwindSafe + Named>
+    TaskPool<'p> for HasCoroutinePoolImpl
+{
     fn get_state(&self) -> PoolState {
         self.pool().get_state()
     }
@@ -62,28 +105,5 @@ pub trait HasCoroutinePool<'p> {
         'p: 'static,
     {
         self.pool().change_blocker(blocker)
-    }
-
-    fn try_run(&self) -> Option<()> {
-        self.pool().try_run()
-    }
-
-    fn try_schedule_task(&self) -> std::io::Result<()> {
-        self.pool().try_schedule_task()
-    }
-
-    fn try_timed_schedule_task(&self, dur: Duration) -> std::io::Result<u64> {
-        self.pool().try_timed_schedule_task(dur)
-    }
-
-    fn try_timeout_schedule_task(&self, timeout_time: u64) -> std::io::Result<u64> {
-        self.pool().try_timeout_schedule_task(timeout_time)
-    }
-
-    fn try_get_task_result(
-        &'p self,
-        task_name: &str,
-    ) -> Option<(String, Result<Option<usize>, &str>)> {
-        self.pool().try_get_task_result(task_name)
     }
 }

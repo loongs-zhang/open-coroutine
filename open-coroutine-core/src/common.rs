@@ -94,8 +94,37 @@ impl Blocker for CondvarBlocker {
     }
 }
 
+cfg_if::cfg_if! {
+    if #[cfg(feature = "net")] {
+        use crate::net::event_loop::core::{EventLoop, EventLoopImpl};
+        use std::sync::Arc;
+
+        #[allow(missing_docs)]
+        #[derive(Debug)]
+        pub struct NetBlocker(pub Arc<EventLoopImpl<'static>>);
+
+        /// const `NET_BLOCKER_NAME`.
+        pub const NET_BLOCKER_NAME: &str = "NetBlocker";
+
+        impl Named for NetBlocker {
+            fn get_name(&self) -> &str {
+                NET_BLOCKER_NAME
+            }
+        }
+
+        impl Blocker for NetBlocker {
+            fn block(&self, dur: Duration) {
+                _ = self.0.wait_event(Some(dur));
+            }
+        }
+    }
+}
+
 /// Join abstraction.
-pub trait JoinHandle {
+pub trait JoinHandle<T> {
+    /// create `JoinHandle` instance.
+    fn new(t: *const T, name: &str) -> Self;
+
     /// get the task name.
     ///
     /// # Errors

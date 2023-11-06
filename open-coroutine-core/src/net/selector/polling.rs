@@ -9,6 +9,12 @@ use std::time::Duration;
 
 pub type Events = Vec<Event>;
 
+impl crate::net::selector::Event for &Event {
+    fn get_token(&self) -> usize {
+        self.key
+    }
+}
+
 /// Event driven impl.
 #[derive(Debug)]
 pub struct SelectorImpl(Poller);
