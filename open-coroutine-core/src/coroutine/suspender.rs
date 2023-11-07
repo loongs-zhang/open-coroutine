@@ -1,4 +1,4 @@
-use crate::coroutine::Current;
+use crate::common::Current;
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::panic::UnwindSafe;
@@ -115,10 +115,8 @@ pub use korosensei::SuspenderImpl;
 #[allow(missing_docs, missing_debug_implementations)]
 #[cfg(feature = "korosensei")]
 mod korosensei {
-    use crate::coroutine::suspender::Suspender;
-    use crate::coroutine::Current;
+    use super::*;
     use corosensei::Yielder;
-    use std::panic::UnwindSafe;
 
     pub struct SuspenderImpl<'s, Param, Yield>(pub(crate) &'s Yielder<Param, Yield>)
     where
