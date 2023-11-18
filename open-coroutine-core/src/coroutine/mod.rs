@@ -14,6 +14,9 @@ pub mod suspender;
 /// Coroutine local abstraction.
 pub mod local;
 
+/// Coroutine stack abstraction.
+pub mod stack;
+
 /// Create a new coroutine.
 #[macro_export]
 macro_rules! co {
@@ -38,8 +41,10 @@ macro_rules! co {
     };
 }
 
+use crate::coroutine::stack::pooled::PooledStack;
 #[cfg(feature = "korosensei")]
 pub use korosensei::CoroutineImpl;
+
 #[allow(missing_docs)]
 #[cfg(feature = "korosensei")]
 mod korosensei;
@@ -87,6 +92,11 @@ pub trait Coroutine<'c>:
         &mut self,
         arg: Self::Resume,
     ) -> std::io::Result<CoroutineState<Self::Yield, Self::Return>>;
+
+    /// Extracts the stack from a coroutine that has finished executing.
+    ///
+    /// This allows the stack to be re-used for another coroutine.
+    fn into_stack(self) -> PooledStack;
 }
 
 /// A trait implemented for coroutines when Resume is ().

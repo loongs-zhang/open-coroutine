@@ -1,3 +1,4 @@
+use crate::constants::PoolState;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -130,6 +131,45 @@ pub trait JoinHandle<T> {
     /// # Errors
     /// if join failed.
     fn timeout_at_join(&self, timeout_time: u64) -> std::io::Result<Result<Option<usize>, &str>>;
+}
+
+/// The `Pool` abstraction.
+pub trait Pool: Debug {
+    /// Set the minimum number in this pool (the meaning of this number
+    /// depends on the specific implementation).
+    fn set_min_size(&self, min_size: usize);
+
+    /// Get the minimum number in this pool (the meaning of this number
+    /// depends on the specific implementation).
+    fn get_min_size(&self) -> usize;
+
+    /// Gets the number currently running in this pool.
+    fn get_running_size(&self) -> usize;
+
+    /// Set the maximum number in this pool (the meaning of this number
+    /// depends on the specific implementation).
+    fn set_max_size(&self, max_size: usize);
+
+    /// Get the maximum number in this pool (the meaning of this number
+    /// depends on the specific implementation).
+    fn get_max_size(&self) -> usize;
+
+    /// Set the maximum idle time running in this pool.
+    /// `keep_alive_time` has `ns` units.
+    fn set_keep_alive_time(&self, keep_alive_time: u64);
+
+    /// Get the maximum idle time running in this pool.
+    /// Returns in `ns` units.
+    fn get_keep_alive_time(&self) -> u64;
+}
+
+/// The `StatePool` abstraction.
+pub trait StatePool: Pool {
+    /// Get the state of this pool.
+    fn get_state(&self) -> PoolState;
+
+    /// Change the state of this pool.
+    fn change_state(&self, state: PoolState) -> PoolState;
 }
 
 #[cfg(test)]

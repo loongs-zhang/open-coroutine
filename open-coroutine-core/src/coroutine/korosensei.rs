@@ -1,9 +1,9 @@
 use crate::common::{Current, Named};
 use crate::constants::CoroutineState;
 use crate::coroutine::local::{CoroutineLocal, HasCoroutineLocal};
+use crate::coroutine::stack::pooled::PooledStack;
 use crate::coroutine::suspender::{DelaySuspender, Suspender, SuspenderImpl};
 use crate::coroutine::{Coroutine, StateCoroutine};
-use corosensei::stack::DefaultStack;
 use corosensei::trap::TrapHandlerRegs;
 use corosensei::{CoroutineResult, ScopedCoroutine};
 use std::cell::Cell;
@@ -28,7 +28,7 @@ where
     Return: Copy + Eq + PartialEq + UnwindSafe,
 {
     name: String,
-    inner: ScopedCoroutine<'c, Param, Yield, Result<Return, &'static str>, DefaultStack>,
+    inner: ScopedCoroutine<'c, Param, Yield, Result<Return, &'static str>, PooledStack>,
     state: Cell<CoroutineState<Yield, Return>>,
     local: CoroutineLocal,
 }
@@ -346,7 +346,8 @@ where
         F: 'c,
         Self: Sized,
     {
-        let stack = DefaultStack::new(stack_size.max(crate::common::page_size()))?;
+        let stack = crate::coroutine::stack::Mempool::get_instance()
+            .malloc(stack_size.max(crate::common::page_size()))?;
         #[cfg(feature = "logs")]
         let co_name = name.clone().leak();
         let inner = ScopedCoroutine::with_stack(stack, move |y, p| {
@@ -418,6 +419,10 @@ where
                 Ok(r)
             }
         }
+    }
+
+    fn into_stack(self) -> PooledStack {
+        self.inner.into_stack()
     }
 }
 

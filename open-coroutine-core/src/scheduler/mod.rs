@@ -203,6 +203,12 @@ impl<'s> SchedulerImpl<'s> {
         }
         Ok(())
     }
+
+    fn on_finish(&self, coroutine:SchedulableCoroutine) {
+        //把内存归还给内存池
+        let stack = coroutine.into_stack();
+        crate::coroutine::stack::Mempool::get_instance().revert(stack);
+    }
 }
 
 impl Default for SchedulerImpl<'_> {
