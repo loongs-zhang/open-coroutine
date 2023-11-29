@@ -15,7 +15,7 @@ pub extern "C" fn connect(socket: c_int, address: *const sockaddr, len: socklen_
     open_coroutine_core::unbreakable!(
         {
             #[cfg(target_os = "linux")]
-            if open_coroutine_iouring::version::support_io_uring() {
+            if open_coroutine_core::net::io_uring::support_io_uring() {
                 return open_coroutine_core::net::event_loop::EventLoops::connect(
                     Some(Lazy::force(&CONNECT)),
                     socket,

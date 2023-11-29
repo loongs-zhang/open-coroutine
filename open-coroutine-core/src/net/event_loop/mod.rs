@@ -256,7 +256,7 @@ impl EventLoops {
         address: *const sockaddr,
         len: socklen_t,
     ) -> c_int {
-        if open_coroutine_iouring::version::support_io_uring() {
+        if crate::net::io_uring::support_io_uring() {
             let event_loop = Self::next(false);
             let r = event_loop.connect(socket, address, len);
             if r.is_err() {
@@ -289,7 +289,7 @@ impl EventLoops {
         len: size_t,
         flags: c_int,
     ) -> ssize_t {
-        if open_coroutine_iouring::version::support_io_uring() {
+        if crate::net::io_uring::support_io_uring() {
             let event_loop = Self::next(false);
             let r = event_loop.recv(socket, buf, len, flags);
             if r.is_err() {
@@ -322,7 +322,7 @@ impl EventLoops {
         len: size_t,
         flags: c_int,
     ) -> ssize_t {
-        if open_coroutine_iouring::version::support_io_uring() {
+        if crate::net::io_uring::support_io_uring() {
             let event_loop = Self::next(false);
             let r = event_loop.send(socket, buf, len, flags);
             if r.is_err() {

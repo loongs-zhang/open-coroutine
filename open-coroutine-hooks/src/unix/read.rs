@@ -12,7 +12,7 @@ pub extern "C" fn recv(socket: c_int, buf: *mut c_void, len: size_t, flags: c_in
     open_coroutine_core::unbreakable!(
         {
             #[cfg(target_os = "linux")]
-            if open_coroutine_iouring::version::support_io_uring() {
+            if open_coroutine_core::net::io_uring::support_io_uring() {
                 return open_coroutine_core::net::event_loop::EventLoops::recv(
                     Some(Lazy::force(&RECV)),
                     socket,

@@ -31,7 +31,7 @@ cfg_if::cfg_if! {
 pub struct EventLoop {
     cpu: u32,
     #[cfg(target_os = "linux")]
-    operator: open_coroutine_iouring::io_uring::IoUringOperator,
+    operator: crate::net::io_uring::IoUringOperator,
     selector: SelectorImpl,
     //是否正在执行select
     waiting: AtomicBool,
@@ -63,7 +63,7 @@ impl EventLoop {
         let mut event_loop = EventLoop {
             cpu,
             #[cfg(target_os = "linux")]
-            operator: open_coroutine_iouring::io_uring::IoUringOperator::new(cpu)?,
+            operator: crate::net::io_uring::IoUringOperator::new(cpu)?,
             selector: SelectorImpl::new()?,
             waiting: AtomicBool::new(false),
             pool: MaybeUninit::uninit(),
@@ -167,7 +167,7 @@ impl EventLoop {
         cfg_if::cfg_if! {
             if #[cfg(target_os = "linux")] {
                 let mut timeout = timeout;
-                if open_coroutine_iouring::version::support_io_uring() {
+                if crate::net::io_uring::support_io_uring() {
                     // use io_uring
                     let mut result = self.operator.select(timeout).map_err(|e| {
                         self.waiting.store(false, Ordering::Release);

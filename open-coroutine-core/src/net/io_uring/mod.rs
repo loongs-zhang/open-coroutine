@@ -1,3 +1,4 @@
+use crate::common::{current_kernel_version, kernel_version};
 use io_uring::opcode::{
     Accept, AsyncCancel, Close, Connect, EpollCtl, Fsync, MkDirAt, OpenAt, PollAdd, PollRemove,
     Read, Readv, Recv, RecvMsg, RenameAt, Send, SendMsg, SendZc, Shutdown, Socket, Timeout,
@@ -16,6 +17,16 @@ use std::io::{Error, ErrorKind};
 use std::sync::Mutex;
 use std::time::Duration;
 
+#[cfg(test)]
+mod tests;
+
+static SUPPORT: Lazy<bool> = Lazy::new(|| current_kernel_version() >= kernel_version(5, 6, 0));
+
+#[must_use]
+pub fn support_io_uring() -> bool {
+    *SUPPORT
+}
+
 pub struct IoUringOperator {
     io_uring: IoUring,
     backlog: Mutex<VecDeque<&'static Entry>>,
@@ -25,7 +36,7 @@ impl Debug for IoUringOperator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IoUringSelector")
             .field("backlog", &self.backlog)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -43,7 +54,7 @@ static PROBE: Lazy<Probe> = Lazy::new(|| {
 macro_rules! support {
     ( $opcode:ident ) => {
         once_cell::sync::Lazy::new(|| {
-            if crate::version::support_io_uring() {
+            if support_io_uring() {
                 return PROBE.is_supported(io_uring::opcode::$opcode::CODE);
             }
             false
@@ -130,7 +141,7 @@ impl IoUringOperator {
     /// select impl
 
     pub fn select(&self, timeout: Option<Duration>) -> std::io::Result<(usize, CompletionQueue)> {
-        if crate::version::support_io_uring() {
+        if support_io_uring() {
             let mut sq = unsafe { self.io_uring.submission_shared() };
             let mut cq = unsafe { self.io_uring.completion_shared() };
             if sq.is_empty() {
@@ -195,7 +206,7 @@ impl IoUringOperator {
                 Fd(epfd),
                 Fd(fd),
                 op,
-                event as *const _ as u64 as *const epoll_event,
+                event.cast_const() as u64 as *const epoll_event,
             )
             .build()
             .user_data(user_data as u64);
