@@ -1,0 +1,58 @@
+#!/usr/bin/env sh
+
+set -ex
+
+CARGO=cargo
+if [ "${CROSS}" = "1" ]; then
+    export CARGO_NET_RETRY=5
+    export CARGO_NET_TIMEOUT=10
+
+    cargo install cross
+    CARGO=cross
+fi
+
+# If a test crashes, we want to know which one it was.
+export RUST_TEST_THREADS=1
+export RUST_BACKTRACE=1
+
+# test open-coroutine-timer mod
+cd "${PROJECT_DIR}"/open-coroutine-timer
+"${CARGO}" test --target "${TARGET}" --no-default-features
+"${CARGO}" test --target "${TARGET}" --no-default-features --release
+
+# test open-coroutine-queue mod
+cd "${PROJECT_DIR}"/open-coroutine-queue
+"${CARGO}" test --target "${TARGET}" --no-default-features
+"${CARGO}" test --target "${TARGET}" --no-default-features --release
+
+# test open-coroutine-iouring mod
+if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ]; then
+    cd "${PROJECT_DIR}"/open-coroutine-iouring
+    "${CARGO}" test --target "${TARGET}" --no-default-features
+    "${CARGO}" test --target "${TARGET}" --no-default-features --release
+fi
+
+# test open-coroutine-core mod
+cd "${PROJECT_DIR}"/open-coroutine-core
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei --release
+
+#"${CARGO}" test --target "${TARGET}" --no-default-features --features net
+#"${CARGO}" test --target "${TARGET}" --no-default-features --features net --release
+
+#if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ]; then
+#    "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring
+#    "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring --release
+#fi
+
+"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule
+"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release
+
+# test examples
+cd "${PROJECT_DIR}"/examples
+"${CARGO}" run --example sleep_not_co --release
+"${CARGO}" run --example sleep_co --release
+"${CARGO}" run --example socket_not_co --release
+"${CARGO}" run --example socket_co_server --release
+"${CARGO}" run --example socket_co_client --release
+"${CARGO}" run --example socket_co --release
