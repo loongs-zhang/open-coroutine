@@ -45,7 +45,9 @@ cd "${PROJECT_DIR}"/open-coroutine-core
 #    "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring --release
 #fi
 
-"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule
+if [ "${TARGET}" != "riscv64gc-unknown-linux-gnu" ]; then
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule
+fi
 "${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release
 
 # test examples
