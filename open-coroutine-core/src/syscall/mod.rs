@@ -266,6 +266,7 @@ pub trait LinuxSyscall: UnixSyscall {
     ) -> c_int;
 }
 
+#[allow(unused_macros)]
 macro_rules! impl_facade {
     ( $struct_name:ident, $trait_name: ident, $syscall: ident($($arg: ident : $arg_type: ty),*) -> $result: ty ) => {
         #[derive(Debug, Default)]
