@@ -186,7 +186,7 @@ impl EventLoops {
         Self::next(true).submit_raw_task(task);
     }
 
-    fn slice_wait(
+    fn slice_wait_just(
         timeout: Option<Duration>,
         event_loop: &'static EventLoop,
     ) -> std::io::Result<()> {
@@ -203,8 +203,8 @@ impl EventLoops {
         }
     }
 
-    pub fn wait_event(timeout: Option<Duration>) -> std::io::Result<()> {
-        Self::slice_wait(timeout, Self::next(true))
+    pub fn wait_just(timeout: Option<Duration>) -> std::io::Result<()> {
+        Self::slice_wait_just(timeout, Self::next(true))
     }
 
     pub fn wait_read_event(fd: c_int, timeout: Option<Duration>) -> std::io::Result<()> {
@@ -212,9 +212,9 @@ impl EventLoops {
         event_loop.add_read_event(fd)?;
         if Self::monitor() == event_loop {
             // wait only happens in non-monitor for non-monitor thread
-            return Self::wait_event(timeout);
+            return Self::wait_just(timeout);
         }
-        Self::slice_wait(timeout, event_loop)
+        Self::slice_wait_just(timeout, event_loop)
     }
 
     pub fn wait_write_event(fd: c_int, timeout: Option<Duration>) -> std::io::Result<()> {
@@ -222,9 +222,9 @@ impl EventLoops {
         event_loop.add_write_event(fd)?;
         if Self::monitor() == event_loop {
             // wait only happens in non-monitor for non-monitor thread
-            return Self::wait_event(timeout);
+            return Self::wait_just(timeout);
         }
-        Self::slice_wait(timeout, event_loop)
+        Self::slice_wait_just(timeout, event_loop)
     }
 
     pub fn del_event(fd: c_int) {
