@@ -1,5 +1,8 @@
+use crate::constants::{Syscall, SyscallState};
 use crate::net::event_loop::EventLoops;
+use crate::scheduler::SchedulableCoroutine;
 use once_cell::sync::Lazy;
+use open_coroutine_timer::get_timeout_time;
 use retour::StaticDetour;
 use std::time::Duration;
 
@@ -19,21 +22,9 @@ trait SleepSyscall {
     );
 }
 
-#[derive(Debug, Default)]
-struct SleepSyscallFacade<I: SleepSyscall> {
-    inner: I,
-}
-
-impl<I: SleepSyscall> SleepSyscall for SleepSyscallFacade<I> {
-    extern "system" fn Sleep(
-        &self,
-        fn_ptr: Option<&StaticDetour<unsafe extern "system" fn(u32)>>,
-        dw_milliseconds: u32,
-    ) {
-        crate::info!("sleep hooked");
-        self.inner.Sleep(fn_ptr, dw_milliseconds);
-    }
-}
+impl_facade!(SleepSyscallFacade, SleepSyscall,
+    Sleep(dw_milliseconds: u32) -> ()
+);
 
 #[derive(Debug, Copy, Clone, Default)]
 struct NioSleepSyscall {}
@@ -44,6 +35,19 @@ impl SleepSyscall for NioSleepSyscall {
         _: Option<&StaticDetour<unsafe extern "system" fn(u32)>>,
         dw_milliseconds: u32,
     ) {
-        _ = EventLoops::wait_just(Some(Duration::from_millis(u64::from(dw_milliseconds))));
+        let time = Duration::from_millis(u64::from(dw_milliseconds));
+        if let Some(co) = SchedulableCoroutine::current() {
+            let syscall = Syscall::Sleep;
+            let new_state = SyscallState::Suspend(get_timeout_time(time));
+            if co.syscall((), syscall, new_state).is_err() {
+                crate::error!(
+                    "{} change to syscall {} {} failed !",
+                    co.get_name(),
+                    syscall,
+                    new_state
+                );
+            }
+        }
+        _ = EventLoops::wait_just(Some(time));
     }
 }
