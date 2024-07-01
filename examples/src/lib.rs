@@ -256,14 +256,14 @@ pub fn sleep_test_co(millis: u64) {
             std::thread::sleep(Duration::from_millis(millis));
             let end = now();
             assert!(end - start >= millis, "Time consumption less than expected");
-            println!("[coroutine1] launched");
+            println!("[coroutine1] [{millis}] launched");
         },
         (),
     );
     _ = task!(
         |_, _| {
             std::thread::sleep(Duration::from_millis(500));
-            println!("[coroutine2] launched");
+            println!("[coroutine2] [{millis}] launched");
         },
         (),
     );
