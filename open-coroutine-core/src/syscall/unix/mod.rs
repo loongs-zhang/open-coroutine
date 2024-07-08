@@ -276,7 +276,6 @@ macro_rules! impl_nio_read_iovec {
                     if received >= length {
                         index += 1;
                     }
-                    std::mem::forget(arg);
                 }
                 std::mem::forget(vec);
                 if blocking {
@@ -437,7 +436,6 @@ macro_rules! impl_nio_write_iovec {
                     if sent >= length {
                         index += 1;
                     }
-                    std::mem::forget(arg);
                 }
                 std::mem::forget(vec);
                 if blocking {
