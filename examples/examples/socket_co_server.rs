@@ -1,22 +1,19 @@
-use open_coroutine_examples::{crate_client, crate_co_server};
-use std::sync::atomic::AtomicBool;
+use open_coroutine_examples::{start_client, start_co_server};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 #[open_coroutine::main(event_loop_size = 2, max_size = 1)]
 fn main() -> std::io::Result<()> {
-    let port = 8889;
-    let server_started = Arc::new(AtomicBool::new(false));
-    let clone = server_started.clone();
+    let addr = "127.0.0.1:8889";
     let server_finished_pair = Arc::new((Mutex::new(true), Condvar::new()));
     let server_finished = Arc::clone(&server_finished_pair);
     _ = std::thread::Builder::new()
         .name("crate_co_server".to_string())
-        .spawn(move || crate_co_server(port, clone, server_finished_pair))
+        .spawn(move || start_co_server(addr, server_finished_pair))
         .expect("failed to spawn thread");
     _ = std::thread::Builder::new()
         .name("crate_client".to_string())
-        .spawn(move || crate_client(port, server_started))
+        .spawn(move || start_client(addr))
         .expect("failed to spawn thread");
 
     let (lock, cvar) = &*server_finished;
