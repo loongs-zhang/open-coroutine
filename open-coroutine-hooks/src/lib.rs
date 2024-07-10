@@ -69,7 +69,7 @@ pub mod coroutine;
 
 pub mod task;
 
-#[allow(dead_code, clippy::not_unsafe_ptr_arg_deref, clippy::similar_names)]
+#[allow(dead_code, clippy::not_unsafe_ptr_arg_deref, clippy::similar_names, unused_imports)]
 #[cfg(unix)]
 pub mod unix;
 
