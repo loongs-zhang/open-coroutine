@@ -87,7 +87,6 @@ pub fn start_co_server<A: ToSocketAddrs>(addr: A, server_finished: Arc<(Mutex<bo
                     *pending = false;
                     cvar.notify_one();
                     println!("Server Closed");
-                    return;
                 }
             },
             stream.expect("accept new connection failed"),
