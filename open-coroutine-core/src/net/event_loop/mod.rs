@@ -16,6 +16,7 @@ use std::time::Duration;
 
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "linux", feature = "io_uring"))] {
+        #[cfg(feature = "logs")]
         use crate::common::Named;
         use crate::constants::{CoroutineState, SyscallState};
         use crate::scheduler::{SchedulableSuspender, SchedulableCoroutine};

@@ -15,9 +15,7 @@ use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
 use std::mem::MaybeUninit;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 mod node;
 
@@ -91,7 +89,7 @@ impl Monitor {
                 if #[cfg(feature = "net")] {
                     //monitor线程不执行协程计算任务，每次循环至少wait 1ms
                     let event_loop = EventLoops::monitor();
-                    _ = event_loop.wait_just(Some(Duration::from_millis(1)));
+                    _ = event_loop.wait_just(Some(std::time::Duration::from_millis(1)));
                     //push tasks to other event-loop
                     while let Some(task) = event_loop.pop() {
                         EventLoops::submit_raw(task);
@@ -172,7 +170,7 @@ impl Monitor {
                 let pair = EventLoops::new_condition();
                 let (lock, cvar) = pair.as_ref();
                 let pending = lock.lock().unwrap();
-                _ = pending.fetch_add(1, Ordering::Release);
+                _ = pending.fetch_add(1, std::sync::atomic::Ordering::Release);
                 cvar.notify_one();
             }
         }

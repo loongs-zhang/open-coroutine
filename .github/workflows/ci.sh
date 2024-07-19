@@ -1,0 +1,55 @@
+#!/usr/bin/env sh
+
+set -ex
+
+CARGO=cargo
+if [ "${CROSS}" = "1" ]; then
+    export CARGO_NET_RETRY=5
+    export CARGO_NET_TIMEOUT=10
+
+    cargo install cross
+    CARGO=cross
+fi
+
+# If a test crashes, we want to know which one it was.
+#export RUST_TEST_THREADS=1
+export RUST_BACKTRACE=1
+
+# test open-coroutine-core mod
+cd "${PROJECT_DIR}"/open-coroutine-core
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei
+"${CARGO}" test --target "${TARGET}" --no-default-features --features korosensei --release
+
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net
+"${CARGO}" test --target "${TARGET}" --no-default-features --features net --release
+
+if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ] || [ "${TARGET}" = "i686-unknown-linux-gnu" ]; then
+    # test io_uring
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features io_uring --release
+fi
+
+"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule;
+"${CARGO}" test --target "${TARGET}" --no-default-features --features preemptive-schedule --release;
+
+"${CARGO}" test --target "${TARGET}";
+"${CARGO}" test --target "${TARGET}" --release;
+
+# test examples
+cd "${PROJECT_DIR}"/examples
+"${CARGO}" run --target "${TARGET}" --example sleep_not_co --release;
+"${CARGO}" run --target "${TARGET}" --example sleep_co --release;
+"${CARGO}" run --target "${TARGET}" --example socket_not_co --release;
+"${CARGO}" run --target "${TARGET}" --example socket_co_server --release;
+"${CARGO}" run --target "${TARGET}" --example socket_co_client --release;
+"${CARGO}" run --target "${TARGET}" --example socket_co --release;
+
+if [ "${TARGET}" = "x86_64-unknown-linux-gnu" ] || [ "${TARGET}" = "i686-unknown-linux-gnu" ]; then
+    # test io_uring
+    "${CARGO}" run --target "${TARGET}" --example sleep_not_co --features io_uring --release;
+    "${CARGO}" run --target "${TARGET}" --example sleep_co --features io_uring --release;
+    "${CARGO}" run --target "${TARGET}" --example socket_not_co --features io_uring --release;
+    "${CARGO}" run --target "${TARGET}" --example socket_co_server --features io_uring --release;
+    "${CARGO}" run --target "${TARGET}" --example socket_co_client --features io_uring --release;
+    "${CARGO}" run --target "${TARGET}" --example socket_co --features io_uring --release;
+fi
