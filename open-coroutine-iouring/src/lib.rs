@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn original() -> anyhow::Result<()> {
-        let port = 8488;
+        let port = 10000;
         let server_started = Arc::new(AtomicBool::new(false));
         let clone = server_started.clone();
         let handle = std::thread::spawn(move || crate_server(port, clone));
@@ -412,7 +412,7 @@ mod tests {
 
     #[test]
     fn framework() -> anyhow::Result<()> {
-        let port = 9898;
+        let port = 10001;
         let server_started = Arc::new(AtomicBool::new(false));
         let clone = server_started.clone();
         let handle = std::thread::spawn(move || crate_server2(port, clone));
