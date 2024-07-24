@@ -102,9 +102,12 @@ static SUPPORT_WRITEV: Lazy<bool> = support!(Writev);
 static SUPPORT_SENDMSG: Lazy<bool> = support!(SendMsg);
 
 impl IoUringOperator {
-    pub fn new(_cpu: u32) -> std::io::Result<Self> {
+    pub fn new(cpu: u32) -> std::io::Result<Self> {
         Ok(IoUringOperator {
-            io_uring: IoUring::builder().build(1024)?,
+            io_uring: IoUring::builder()
+                .setup_sqpoll(1000)
+                .setup_sqpoll_cpu(cpu)
+                .build(1024)?,
             backlog: Mutex::new(VecDeque::new()),
         })
     }
