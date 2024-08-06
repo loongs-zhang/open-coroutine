@@ -1,7 +1,6 @@
 use retour::static_detour;
 use std::error::Error;
-use std::os::raw::c_void;
-use std::{ffi::CString, iter, mem};
+use std::ffi::{c_void, CString};
 use windows_sys::Win32::Foundation::BOOL;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows_sys::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
@@ -25,26 +24,19 @@ pub unsafe extern "system" fn DllMain(
     }
 }
 
-static_detour! {
-  static SleepHook: unsafe extern "system" fn(u32);
-}
-
-// A type alias for `FnSleep` (makes the transmute easy on the eyes)
-type FnSleep = unsafe extern "system" fn(u32);
-
 /// Called when the DLL is attached to the process.
 unsafe fn main() -> Result<(), Box<dyn Error>> {
-    // Retrieve an absolute address of `MessageBoxW`. This is required for
-    // libraries due to the import address table. If `MessageBoxW` would be
-    // provided directly as the target, it would only hook this DLL's
-    // `MessageBoxW`. Using the method below an absolute address is retrieved
-    // instead, detouring all invocations of `MessageBoxW` in the active process.
     let address =
         get_module_symbol_address("kernel32.dll", "Sleep").expect("could not find 'Sleep' address");
-    let target: FnSleep = mem::transmute(address);
-
-    // Initialize AND enable the detour (the 2nd parameter can also be a closure)
-    SleepHook.initialize(target, sleep_detour)?.enable()?;
+    let target: unsafe extern "system" fn(u32) = std::mem::transmute(address);
+    static_detour! {
+      static SLEEP: unsafe extern "system" fn(u32);
+    }
+    #[allow(non_snake_case)]
+    fn Sleep(dw_milliseconds: u32) {
+        open_coroutine_core::syscall::Sleep(Some(&SLEEP), dw_milliseconds);
+    }
+    SleepHook.initialize(target, Sleep)?.enable()?;
     Ok(())
 }
 
@@ -52,15 +44,11 @@ unsafe fn main() -> Result<(), Box<dyn Error>> {
 fn get_module_symbol_address(module: &str, symbol: &str) -> Option<usize> {
     let module = module
         .encode_utf16()
-        .chain(iter::once(0))
+        .chain(std::iter::once(0))
         .collect::<Vec<u16>>();
     let symbol = CString::new(symbol).unwrap();
     unsafe {
         let handle = GetModuleHandleW(module.as_ptr());
         GetProcAddress(handle, symbol.as_ptr().cast()).map(|n| n as usize)
     }
-}
-
-fn sleep_detour(dw_milliseconds: u32) {
-    open_coroutine_core::syscall::Sleep(Some(&SleepHook), dw_milliseconds);
 }
