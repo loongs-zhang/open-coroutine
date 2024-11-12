@@ -106,7 +106,7 @@ impl<'e> EventLoop<'e> {
         })
     }
 
-    #[allow(clippy::useless_conversion)]
+    #[allow(trivial_numeric_casts, clippy::cast_possible_truncation)]
     fn token(syscall: Syscall) -> usize {
         if let Some(co) = SchedulableCoroutine::current() {
             let boxed: &'static mut CString = Box::leak(Box::from(
@@ -126,7 +126,7 @@ impl<'e> EventLoop<'e> {
                 }
             }
             let syscall_mask = <Syscall as Into<&str>>::into(syscall).as_ptr() as usize;
-            let token = usize::try_from(thread_id).expect("overflow") ^ syscall_mask;
+            let token = thread_id as usize ^ syscall_mask;
             if Syscall::nio() != syscall {
                 eprintln!("{syscall} {token}");
             }
@@ -229,7 +229,29 @@ impl<'e> EventLoop<'e> {
             }
         }
 
-        #[cfg(all(target_os = "linux", feature = "io_uring"))]
+        cfg_if::cfg_if! {
+            if #[cfg(all(target_os = "linux", feature = "io_uring"))] {
+                left_time = self.adapt_io_uring(left_time)?;
+            } else if #[cfg(all(windows, feature = "iocp"))] {
+                left_time = self.adapt_iocp(left_time)?;
+            }
+        }
+
+        // use epoll/kevent/iocp
+        let mut events = Events::with_capacity(1024);
+        self.selector.select(&mut events, left_time)?;
+        #[allow(clippy::explicit_iter_loop)]
+        for event in events.iter() {
+            let token = event.get_token();
+            if event.readable() || event.writable() {
+                unsafe { self.resume(token) };
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(all(target_os = "linux", feature = "io_uring"))]
+    fn adapt_io_uring(&self, mut left_time: Option<Duration>) -> std::io::Result<Option<Duration>> {
         if crate::net::operator::support_io_uring() {
             // use io_uring
             let (count, mut cq, left) = self.operator.select(left_time, 0)?;
@@ -255,24 +277,7 @@ impl<'e> EventLoop<'e> {
                 left_time = Some(left.unwrap_or(Duration::ZERO));
             }
         }
-
-        cfg_if::cfg_if! {
-            if #[cfg(all(windows, feature = "iocp"))] {
-                left_time = self.adapt_iocp(left_time)?;
-            }
-        }
-
-        // use epoll/kevent/iocp
-        let mut events = Events::with_capacity(1024);
-        self.selector.select(&mut events, left_time)?;
-        #[allow(clippy::explicit_iter_loop)]
-        for event in events.iter() {
-            let token = event.get_token();
-            if event.readable() || event.writable() {
-                unsafe { self.resume(token) };
-            }
-        }
-        Ok(())
+        Ok(left_time)
     }
 
     #[cfg(all(windows, feature = "iocp"))]
