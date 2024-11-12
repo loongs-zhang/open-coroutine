@@ -36,12 +36,7 @@ pub struct Coroutine<'c, Param, Yield, Return> {
 impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
     cfg_if::cfg_if! {
         if #[cfg(unix)] {
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::too_many_lines,
-                clippy::cast_sign_loss,
-                clippy::cast_possible_wrap
-            )]
+            #[allow(clippy::too_many_lines)]
             extern "C" fn trap_handler(
                 _signum: libc::c_int,
                 _siginfo: *mut libc::siginfo_t,
@@ -56,33 +51,33 @@ impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
                             any(target_os = "linux", target_os = "android"),
                             target_arch = "x86_64",
                         ))] {
-                            let sp = context.uc_mcontext.gregs[libc::REG_RSP as usize] as usize;
+                            let sp = context.uc_mcontext.gregs[libc::REG_RSP as usize].try_into().expect("overflow");
                         } else if #[cfg(all(
                             any(target_os = "linux", target_os = "android"),
                             target_arch = "x86",
                         ))] {
-                            let sp = context.uc_mcontext.gregs[libc::REG_ESP as usize] as usize;
+                            let sp = context.uc_mcontext.gregs[libc::REG_ESP as usize].try_into().expect("overflow");
                         } else if #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))] {
-                            let sp = (*context.uc_mcontext).__ss.__rsp as usize;
+                            let sp = (*context.uc_mcontext).__ss.__rsp.try_into().expect("overflow");
                         } else if #[cfg(all(
                                 any(target_os = "linux", target_os = "android"),
                                 target_arch = "aarch64",
                             ))] {
-                            let sp = context.uc_mcontext.sp as usize;
+                            let sp = context.uc_mcontext.sp.try_into().expect("overflow");
                         } else if #[cfg(all(
                             any(target_os = "linux", target_os = "android"),
                             target_arch = "arm",
                         ))] {
-                            let sp = context.uc_mcontext.arm_sp as usize;
+                            let sp = context.uc_mcontext.arm_sp.try_into().expect("overflow");
                         } else if #[cfg(all(
                             any(target_os = "linux", target_os = "android"),
                             any(target_arch = "riscv64", target_arch = "riscv32"),
                         ))] {
-                            let sp = context.uc_mcontext.__gregs[libc::REG_SP] as usize;
+                            let sp = context.uc_mcontext.__gregs[libc::REG_SP].try_into().expect("overflow");
                         } else if #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))] {
-                            let sp = (*context.uc_mcontext).__ss.__sp as usize;
+                            let sp = (*context.uc_mcontext).__ss.__sp.try_into().expect("overflow");
                         } else if #[cfg(all(target_os = "linux", target_arch = "loongarch64"))] {
-                            let sp = context.uc_mcontext.__gregs[3] as usize;
+                            let sp = context.uc_mcontext.__gregs[3].try_into().expect("overflow");
                         } else {
                             compile_error!("Unsupported platform");
                         }
@@ -105,21 +100,21 @@ impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
                                     target_arch = "x86_64",
                                 ))] {
                                 let TrapHandlerRegs { rip, rsp, rbp, rdi, rsi } = regs;
-                                context.uc_mcontext.gregs[libc::REG_RIP as usize] = rip as i64;
-                                context.uc_mcontext.gregs[libc::REG_RSP as usize] = rsp as i64;
-                                context.uc_mcontext.gregs[libc::REG_RBP as usize] = rbp as i64;
-                                context.uc_mcontext.gregs[libc::REG_RDI as usize] = rdi as i64;
-                                context.uc_mcontext.gregs[libc::REG_RSI as usize] = rsi as i64;
+                                context.uc_mcontext.gregs[libc::REG_RIP as usize] = rip.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_RSP as usize] = rsp.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_RBP as usize] = rbp.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_RDI as usize] = rdi.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_RSI as usize] = rsi.try_into().expect("overflow");
                             } else if #[cfg(all(
                                 any(target_os = "linux", target_os = "android"),
                                 target_arch = "x86",
                             ))] {
                                 let TrapHandlerRegs { eip, esp, ebp, ecx, edx } = regs;
-                                context.uc_mcontext.gregs[libc::REG_EIP as usize] = eip as i32;
-                                context.uc_mcontext.gregs[libc::REG_ESP as usize] = esp as i32;
-                                context.uc_mcontext.gregs[libc::REG_EBP as usize] = ebp as i32;
-                                context.uc_mcontext.gregs[libc::REG_ECX as usize] = ecx as i32;
-                                context.uc_mcontext.gregs[libc::REG_EDX as usize] = edx as i32;
+                                context.uc_mcontext.gregs[libc::REG_EIP as usize] = eip.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_ESP as usize] = esp.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_EBP as usize] = ebp.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_ECX as usize] = ecx.try_into().expect("overflow");
+                                context.uc_mcontext.gregs[libc::REG_EDX as usize] = edx.try_into().expect("overflow");
                             } else if #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))] {
                                 let TrapHandlerRegs { rip, rsp, rbp, rdi, rsi } = regs;
                                 (*context.uc_mcontext).__ss.__rip = rip;
@@ -175,12 +170,12 @@ impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
                                 any(target_arch = "riscv64", target_arch = "riscv32"),
                             ))] {
                                 let TrapHandlerRegs { pc, ra, sp, a0, a1, s0 } = regs;
-                                context.uc_mcontext.__gregs[libc::REG_PC] = pc as libc::c_ulong;
-                                context.uc_mcontext.__gregs[libc::REG_RA] = ra as libc::c_ulong;
-                                context.uc_mcontext.__gregs[libc::REG_SP] = sp as libc::c_ulong;
-                                context.uc_mcontext.__gregs[libc::REG_A0] = a0 as libc::c_ulong;
-                                context.uc_mcontext.__gregs[libc::REG_A0 + 1] = a1 as libc::c_ulong;
-                                context.uc_mcontext.__gregs[libc::REG_S0] = s0 as libc::c_ulong;
+                                context.uc_mcontext.__gregs[libc::REG_PC] = pc.try_into().expect("overflow");
+                                context.uc_mcontext.__gregs[libc::REG_RA] = ra.try_into().expect("overflow");
+                                context.uc_mcontext.__gregs[libc::REG_SP] = sp.try_into().expect("overflow");
+                                context.uc_mcontext.__gregs[libc::REG_A0] = a0.try_into().expect("overflow");
+                                context.uc_mcontext.__gregs[libc::REG_A0 + 1] = a1.try_into().expect("overflow");
+                                context.uc_mcontext.__gregs[libc::REG_S0] = s0.try_into().expect("overflow");
                             } else if #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))] {
                                 let TrapHandlerRegs { pc, sp, x0, x1, x29, lr } = regs;
                                 (*context.uc_mcontext).__ss.__pc = pc;
@@ -216,7 +211,7 @@ impl<'c, Param, Yield, Return> Coroutine<'c, Param, Yield, Return> {
                         if #[cfg(target_arch = "x86_64")] {
                             let sp = usize::try_from((*(*exception_info).ContextRecord).Rsp).expect("parse RSP failed");
                         } else if #[cfg(target_arch = "x86")] {
-                            let sp = (*(*exception_info).ContextRecord).Esp as usize;
+                            let sp = (*(*exception_info).ContextRecord).Esp.try_into().expect("overflow");
                         } else {
                             compile_error!("Unsupported platform");
                         }
