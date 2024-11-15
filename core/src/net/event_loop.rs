@@ -7,7 +7,7 @@ use crate::{error, impl_current_for, impl_display_by_debug, info};
 use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashSet;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-use libc::{epoll_event, iovec, msghdr, off_t, size_t, sockaddr, socklen_t, ssize_t};
+use libc::{epoll_event, iovec, msghdr, off_t, size_t, sockaddr, socklen_t};
 use once_cell::sync::Lazy;
 use rand::Rng;
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -307,9 +307,9 @@ impl<'e> EventLoop<'e> {
                                 cqe.socket,
                                 SOL_SOCKET,
                                 SO_UPDATE_ACCEPT_CONTEXT,
-                                (&cqe.from_fd as *const SOCKET).cast(),
-                                size_of::<SOCKET>() as c_int,
-                            )
+                                std::ptr::from_ref(&cqe.from_fd).cast(),
+                                c_int::try_from(size_of::<SOCKET>()).expect("size overflow"),
+                            );
                         };
                         cqe.socket.try_into().expect("result overflow")
                     }

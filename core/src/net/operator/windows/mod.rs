@@ -144,14 +144,16 @@ impl Operator<'_> {
                 if timeout_time.saturating_sub(now()) == 0 {
                     break;
                 }
-                let err = Error::last_os_error().raw_os_error();
-                if Some(WAIT_TIMEOUT as i32) == err {
+                let e = Error::last_os_error();
+                let err = e.raw_os_error();
+                if Some(i32::try_from(WAIT_TIMEOUT).expect("overflow")) == err {
                     continue;
                 }
-                if Some(ERROR_NETNAME_DELETED as i32) == err {
+                if Some(i32::try_from(ERROR_NETNAME_DELETED).expect("overflow")) == err {
                     _ = unsafe { closesocket(overlapped.socket) };
                     continue;
                 }
+                return Err(e);
             }
             overlapped.bytes_transferred = bytes;
             cq.push(overlapped);
@@ -358,7 +360,7 @@ impl Operator<'_> {
                 overlapped.token = user_data;
                 overlapped.syscall = Syscall::write;
                 let buf = [WSABUF {
-                    len: count.try_into().expect("len overflow"),
+                    len: count,
                     buf: buf.cast_mut().cast(),
                 }];
                 if WSASend(
