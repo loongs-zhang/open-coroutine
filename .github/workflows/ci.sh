@@ -15,6 +15,12 @@ fi
 export RUST_TEST_THREADS=1
 export RUST_BACKTRACE=1
 
+# todo remove this
+if [ "${OS}" = "windows-latest" ]; then
+    cd "${PROJECT_DIR}"/core
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp,log
+}
+
 # test open-coroutine-core mod
 cd "${PROJECT_DIR}"/core
 "${CARGO}" test --target "${TARGET}"
@@ -38,7 +44,7 @@ fi
 # test IOCP
 if [ "${OS}" = "windows-latest" ]; then
     cd "${PROJECT_DIR}"/core
-    "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp,log
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp
     "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp --release
     cd "${PROJECT_DIR}"/open-coroutine
     "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp
