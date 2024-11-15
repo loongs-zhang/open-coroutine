@@ -19,7 +19,7 @@ export RUST_BACKTRACE=1
 if [ "${OS}" = "windows-latest" ]; then
     cd "${PROJECT_DIR}"/core
     "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp,log
-}
+fi
 
 # test open-coroutine-core mod
 cd "${PROJECT_DIR}"/core
