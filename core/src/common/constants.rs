@@ -49,9 +49,13 @@ impl_display_by_debug!(PoolState);
 pub enum Syscall {
     #[cfg(windows)]
     Sleep,
+    #[cfg(unix)]
     sleep,
+    #[cfg(unix)]
     usleep,
+    #[cfg(unix)]
     nanosleep,
+    #[cfg(unix)]
     poll,
     select,
     #[cfg(target_os = "linux")]
