@@ -1,6 +1,6 @@
 use crate::common::constants::Syscall;
 use crate::common::{get_timeout_time, now};
-use crate::impl_display_by_debug;
+use crate::{impl_display_by_debug, info};
 use dashmap::{DashMap, DashSet};
 use once_cell::sync::Lazy;
 use std::ffi::{c_int, c_uint, c_void};
@@ -139,7 +139,7 @@ impl Operator<'_> {
                     1,
                 )
             };
-            eprintln!("IOCP got Overlapped:{overlapped}");
+            info!("IOCP got Overlapped:{overlapped}");
             if ret == FALSE {
                 if timeout_time.saturating_sub(now()) == 0 {
                     break;
@@ -215,7 +215,7 @@ impl Operator<'_> {
                         break;
                     }
                 }
-                eprintln!("add accept operation Overlapped:{overlapped}");
+                info!("add accept operation Overlapped:{overlapped}");
             }
             return Ok(());
         }
@@ -259,7 +259,7 @@ impl Operator<'_> {
                     "add recv operation failed",
                 ));
             }
-            eprintln!("add recv operation Overlapped:{overlapped}");
+            info!("add recv operation Overlapped:{overlapped}");
         }
         Ok(())
     }
@@ -301,7 +301,7 @@ impl Operator<'_> {
                     "add WSARecv operation failed",
                 ));
             }
-            eprintln!("add WSARecv operation Overlapped:{overlapped}");
+            info!("add WSARecv operation Overlapped:{overlapped}");
         }
         Ok(())
     }
@@ -340,7 +340,7 @@ impl Operator<'_> {
                     "add send operation failed",
                 ));
             }
-            eprintln!("add send operation Overlapped:{overlapped}");
+            info!("add send operation Overlapped:{overlapped}");
         }
         Ok(())
     }
@@ -379,7 +379,7 @@ impl Operator<'_> {
                         "add send operation failed",
                     ));
                 }
-                eprintln!("add send operation Overlapped:{overlapped}");
+                info!("add send operation Overlapped:{overlapped}");
                 return Ok(());
             }
         }
@@ -423,7 +423,7 @@ impl Operator<'_> {
                     "add WSASend operation failed",
                 ));
             }
-            eprintln!("add WSASend operation Overlapped:{overlapped}");
+            info!("add WSASend operation Overlapped:{overlapped}");
         }
         Ok(())
     }

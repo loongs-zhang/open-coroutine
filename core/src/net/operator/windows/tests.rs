@@ -154,6 +154,15 @@ fn crate_server2(port: u16, server_started: Arc<AtomicBool>) -> anyhow::Result<(
 
 #[test]
 fn framework() -> anyhow::Result<()> {
+    #[cfg(feature = "log")]
+    let _ = tracing_subscriber::fmt()
+        .with_thread_names(true)
+        .with_line_number(true)
+        .with_timer(tracing_subscriber::fmt::time::OffsetTime::new(
+            time::UtcOffset::from_hms(8, 0, 0).expect("create UtcOffset failed !"),
+            time::format_description::well_known::Rfc2822,
+        ))
+        .try_init();
     let port = 7061;
     let server_started = Arc::new(AtomicBool::new(false));
     let clone = server_started.clone();
