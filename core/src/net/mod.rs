@@ -18,9 +18,6 @@ use std::time::Duration;
 #[cfg(all(windows, feature = "iocp"))]
 use windows_sys::Win32::Networking::WinSock::{SOCKADDR, SOCKET};
 
-/// 做C兼容时会用到
-pub type UserFunc = extern "C" fn(usize) -> usize;
-
 cfg_if::cfg_if! {
     if #[cfg(all(target_os = "linux", feature = "io_uring"))] {
         use libc::{epoll_event, iovec, msghdr, off_t, size_t, sockaddr, socklen_t};
@@ -28,14 +25,21 @@ cfg_if::cfg_if! {
     }
 }
 
+/// 做C兼容时会用到
+pub type UserFunc = extern "C" fn(usize) -> usize;
+
 mod selector;
 
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::too_many_arguments
+)]
 #[cfg(any(
     all(target_os = "linux", feature = "io_uring"),
     all(windows, feature = "iocp")
 ))]
-pub(crate) mod operator;
+mod operator;
 
 #[allow(missing_docs)]
 pub mod event_loop;
