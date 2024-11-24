@@ -213,7 +213,7 @@ impl<Yield, Return> Listener<Yield, Return> for MonitorListener {
 mod tests {
     #[cfg(not(target_arch = "riscv64"))]
     #[test]
-    fn test() -> std::io::Result<()> {
+    fn signal_test() -> std::io::Result<()> {
         use nix::sys::pthread::pthread_kill;
         use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
         use std::os::unix::prelude::JoinHandleExt;

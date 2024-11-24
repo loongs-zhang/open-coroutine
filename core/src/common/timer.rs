@@ -188,7 +188,7 @@ mod tests {
     use crate::common::timer::TimerList;
 
     #[test]
-    fn test() {
+    fn timer_test() {
         assert!(now() > 0);
     }
 

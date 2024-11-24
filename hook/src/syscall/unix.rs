@@ -75,5 +75,5 @@ impl_hook!(UNLINK, unlink(src: *const c_char) -> c_int);
 
 // NOTE: unhook write/pthread_mutex_lock/pthread_mutex_unlock due to stack overflow or bug
 // impl_hook!(WRITE, write(fd: c_int, buf: *const c_void, count: size_t) -> ssize_t);
-// impl_hook!(PTHREAD_MUTEX_LOCK, pthread_mutex_lock(lock: *mut pthread_mutex_t) -> c_int);
+impl_hook!(PTHREAD_MUTEX_LOCK, pthread_mutex_lock(lock: *mut pthread_mutex_t) -> c_int);
 // impl_hook!(PTHREAD_MUTEX_UNLOCK, pthread_mutex_unlock(lock: *mut pthread_mutex_t) -> c_int);

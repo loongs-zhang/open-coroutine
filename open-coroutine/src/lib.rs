@@ -309,7 +309,7 @@ mod tests {
     use open_coroutine_core::net::config::Config;
 
     #[test]
-    fn test() {
+    fn open_coroutine_test() {
         init(Config::single());
         let join = task!(
             |_| {

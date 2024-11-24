@@ -49,7 +49,7 @@ mod tests {
     use crate::co_pool::task::Task;
 
     #[test]
-    fn test() {
+    fn task_test() {
         let task = Task::new(
             String::from("test"),
             |p| {

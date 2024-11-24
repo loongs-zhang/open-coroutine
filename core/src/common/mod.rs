@@ -202,7 +202,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn test() {
+    fn test_version() {
         assert!(current_kernel_version() > kernel_version(2, 7, 0))
     }
 }
