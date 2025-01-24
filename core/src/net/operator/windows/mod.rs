@@ -180,7 +180,7 @@ impl<'o> Operator<'o> {
                         | SyscallName::send
                         | SyscallName::WSASend => {
                             let r = entry.dwNumberOfBytesTransferred.into();
-                            if r > 0 {
+                            if r >= 0 {
                                 r
                             } else {
                                 -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
@@ -364,6 +364,7 @@ impl<'o> Operator<'o> {
             overlapped.from_fd = fd;
             overlapped.token = user_data;
             overlapped.syscall_name = syscall_name;
+            overlapped.result = -1;
             if WSARecv(
                 fd,
                 buf,
@@ -457,6 +458,7 @@ impl<'o> Operator<'o> {
             overlapped.from_fd = fd;
             overlapped.token = user_data;
             overlapped.syscall_name = syscall_name;
+            overlapped.result = -1;
             if WSASend(
                 fd,
                 buf,

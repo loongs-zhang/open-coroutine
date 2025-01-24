@@ -15,6 +15,13 @@ fi
 export RUST_TEST_THREADS=1
 export RUST_BACKTRACE=1
 
+# todo remove this
+if [ "${OS}" = "windows-latest" ]; then
+    cd "${PROJECT_DIR}"/open-coroutine
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp,ci
+    "${CARGO}" test --target "${TARGET}" --no-default-features --features iocp,ci --release
+fi
+
 # test open-coroutine-core mod
 cd "${PROJECT_DIR}"/core
 "${CARGO}" test --target "${TARGET}" --features ci

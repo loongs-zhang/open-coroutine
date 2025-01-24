@@ -89,7 +89,7 @@ impl<I: AcceptSyscall> AcceptSyscall for IocpAcceptSyscall<I> {
             let (lock, cvar) = &*arc;
             let syscall_result = cvar
                 .wait_while(lock.lock().expect("lock failed"),
-                    |&mut result| result.is_none()
+                            |&mut result| result.is_none()
                 )
                 .expect("lock failed")
                 .expect("no syscall result");
