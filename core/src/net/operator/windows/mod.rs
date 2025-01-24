@@ -180,7 +180,7 @@ impl<'o> Operator<'o> {
                         | SyscallName::send
                         | SyscallName::WSASend => {
                             let r = entry.dwNumberOfBytesTransferred.into();
-                            if r >= 0 {
+                            if r > 0 {
                                 r
                             } else {
                                 -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
