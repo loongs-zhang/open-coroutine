@@ -115,7 +115,6 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
         use crate::common::constants::{CoroutineState, SyscallState};
         use crate::net::EventLoops;
         use crate::scheduler::{SchedulableCoroutine, SchedulableSuspender};
-        use windows_sys::Win32::Networking::WinSock::{SOCKET_ERROR, WSAEWOULDBLOCK};
 
         if !lpoverlapped.is_null() {
             return RawWSASendSyscall::default().WSASend(
@@ -159,7 +158,7 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
                 }
             }
             let (lock, cvar) = &*arc;
-            let syscall_result: c_int = cvar
+            let mut syscall_result: c_int = cvar
                 .wait_while(lock.lock().expect("lock failed"),
                             |&mut result| result.is_none()
                 )
