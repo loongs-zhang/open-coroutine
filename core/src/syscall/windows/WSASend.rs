@@ -70,7 +70,7 @@ trait WSASendSyscall {
     ) -> c_int;
 }
 
-impl_facade!(WSARecvSyscallFacade, WSARecvSyscall,
+impl_facade!(WSASendSyscallFacade, WSASendSyscall,
     WSASend(
         fd: SOCKET,
         buf: *const WSABUF,
@@ -112,8 +112,9 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
         lpoverlapped: *mut OVERLAPPED,
         lpcompletionroutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
     ) -> c_int {
+        use crate::common::constants::{CoroutineState, SyscallState};
         use crate::net::EventLoops;
-        use crate::scheduler::SchedulableSuspender;
+        use crate::scheduler::{SchedulableCoroutine, SchedulableSuspender};
         use windows_sys::Win32::Networking::WinSock::{SOCKET_ERROR, WSAEWOULDBLOCK};
 
         if !lpoverlapped.is_null() {
@@ -130,11 +131,11 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
         }
         if let Ok(arc) = EventLoops::WSASend(fd, buf, dwbuffercount, lpnumberofbytessent, dwflags, lpoverlapped, lpcompletionroutine) {
             if let Some(co) = SchedulableCoroutine::current() {
-                if let CoroutineState::SystemCall((), syscall, SyscallState::Executing) = co.state()
+                if let CoroutineState::Syscall((), syscall, SyscallState::Executing) = co.state()
                 {
                     let new_state = SyscallState::Suspend(crate::syscall::send_time_limit(fd));
                     if co.syscall((), syscall, new_state).is_err() {
-                        error!(
+                        crate::error!(
                             "{} change to syscall {} {} failed !",
                             co.name(), syscall, new_state
                         );
@@ -146,11 +147,11 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
                 //回来的时候，系统调用已经执行完了
             }
             if let Some(co) = SchedulableCoroutine::current() {
-                if let CoroutineState::SystemCall((), syscall, SyscallState::Callback) = co.state()
+                if let CoroutineState::Syscall((), syscall, SyscallState::Callback) = co.state()
                 {
                     let new_state = SyscallState::Executing;
                     if co.syscall((), syscall, new_state).is_err() {
-                        error!(
+                        crate::error!(
                             "{} change to syscall {} {} failed !",
                             co.name(), syscall, new_state
                         );
@@ -167,8 +168,7 @@ impl<I: WSASendSyscall> WSASendSyscall for IocpWSASendSyscall<I> {
                 .try_into()
                 .expect("IOCP syscall result overflow");
             if syscall_result < 0 {
-                let errno: std::ffi::c_int = (-syscall_result).try_into()
-                    .expect("IOCP errno overflow");
+                let errno = (-syscall_result).try_into().expect("IOCP errno overflow");
                 crate::syscall::set_errno(errno);
                 syscall_result = -1;
             }
