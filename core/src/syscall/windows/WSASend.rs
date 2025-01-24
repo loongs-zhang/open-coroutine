@@ -26,8 +26,11 @@ pub extern "system" fn WSASend(
 ) -> c_int {
     cfg_if::cfg_if! {
         if #[cfg(all(windows, feature = "iocp"))] {
+            static RAW: Lazy<RawWSASendSyscall> = Lazy::new(Default::default);
+            static CHAIN: Lazy<
+                WSASendSyscallFacade<IocpWSASendSyscall<NioWSASendSyscall<RawWSASendSyscall>>>
+            > = Lazy::new(Default::default);
             if !lpoverlapped.is_null() {
-                static RAW: Lazy<RawWSASendSyscall> = Lazy::new(Default::default);
                 return RAW.WSASend(
                     fn_ptr,
                     fd,
@@ -39,9 +42,6 @@ pub extern "system" fn WSASend(
                     lpcompletionroutine,
                 );
             }
-            static CHAIN: Lazy<
-                WSASendSyscallFacade<IocpWSASendSyscall<NioWSASendSyscall<RawWSASendSyscall>>>
-            > = Lazy::new(Default::default);
         } else {
             static CHAIN: Lazy<WSASendSyscallFacade<NioWSASendSyscall<RawWSASendSyscall>>> =
                 Lazy::new(Default::default);
