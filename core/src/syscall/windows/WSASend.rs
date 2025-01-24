@@ -24,21 +24,21 @@ pub extern "system" fn WSASend(
     lpoverlapped: *mut OVERLAPPED,
     lpcompletionroutine: LPWSAOVERLAPPED_COMPLETION_ROUTINE,
 ) -> c_int {
-    if !lpoverlapped.is_null() {
-        static RAW: Lazy<RawWSASendSyscall> = Lazy::new(Default::default);
-        return RAW.WSASend(
-            fn_ptr,
-            fd,
-            buf,
-            dwbuffercount,
-            lpnumberofbytessent,
-            dwflags,
-            lpoverlapped,
-            lpcompletionroutine,
-        );
-    }
     cfg_if::cfg_if! {
         if #[cfg(all(windows, feature = "iocp"))] {
+            if !lpoverlapped.is_null() {
+                static RAW: Lazy<RawWSASendSyscall> = Lazy::new(Default::default);
+                return RAW.WSASend(
+                    fn_ptr,
+                    fd,
+                    buf,
+                    dwbuffercount,
+                    lpnumberofbytessent,
+                    dwflags,
+                    lpoverlapped,
+                    lpcompletionroutine,
+                );
+            }
             static CHAIN: Lazy<
                 WSASendSyscallFacade<IocpWSASendSyscall<NioWSASendSyscall<RawWSASendSyscall>>>
             > = Lazy::new(Default::default);
