@@ -183,7 +183,8 @@ impl<'o> Operator<'o> {
                             if r > 0 {
                                 r
                             } else {
-                                -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
+                                // -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
+                                continue;
                             }
                         }
                         _ => panic!("unsupported"),
