@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use windows_sys::core::{PCSTR, PSTR};
 use windows_sys::Win32::Foundation::{
-    ERROR_INVALID_PARAMETER, FALSE, HANDLE, INVALID_HANDLE_VALUE,
+    GetLastError, ERROR_INVALID_PARAMETER, FALSE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Networking::WinSock::{
     getsockopt, setsockopt, AcceptEx, WSAGetLastError, WSARecv, WSASend, WSASocketW,
@@ -172,7 +172,7 @@ impl<'o> Operator<'o> {
                             {
                                 cqe.socket.try_into().expect("result overflow")
                             } else {
-                                -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
+                                -c_longlong::from(GetLastError())
                             }
                         }
                         SyscallName::recv
@@ -183,7 +183,8 @@ impl<'o> Operator<'o> {
                             if r > 0 {
                                 r
                             } else {
-                                // -c_longlong::from(windows_sys::Win32::Foundation::GetLastError())
+                                // -c_longlong::from(GetLastError())
+                                eprintln!("IOCP return bytes unexpected:{cqe}");
                                 continue;
                             }
                         }
