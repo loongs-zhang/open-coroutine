@@ -8,6 +8,7 @@ use crate::coroutine::suspender::Suspender;
 use crate::scheduler::{SchedulableCoroutine, Scheduler};
 use crate::{error, impl_current_for, impl_display_by_debug, impl_for_named, trace};
 use dashmap::{DashMap, DashSet};
+use once_cell::sync::Lazy;
 use std::cell::Cell;
 use std::ffi::c_longlong;
 use std::io::{Error, ErrorKind};
@@ -24,6 +25,8 @@ mod state;
 
 /// Creator for coroutine pool.
 mod creator;
+
+static CANCEL_TASKS: Lazy<DashSet<&str>> = Lazy::new(DashSet::new);
 
 /// The coroutine pool impls.
 #[repr(C)]
@@ -383,6 +386,11 @@ impl<'p> CoroutinePool<'p> {
 
     fn try_run(&self) -> Option<()> {
         self.task_queue.pop().map(|task| {
+            let task_name = task.get_name();
+            if CANCEL_TASKS.contains(task_name) {
+                _ = CANCEL_TASKS.remove(task_name);
+                return;
+            }
             let (task_name, result) = task.run();
             let n = task_name.clone().leak();
             if self.no_waits.contains(n) {
@@ -404,6 +412,12 @@ impl<'p> CoroutinePool<'p> {
             *pending = false;
             cvar.notify_one();
         }
+    }
+
+    /// Cancel a task.
+    pub fn cancel_task(name: &str) {
+        // todo 发送信号，在运行时取消任务
+        _ = CANCEL_TASKS.insert(Box::leak(Box::from(name)));
     }
 
     /// Schedule the tasks.

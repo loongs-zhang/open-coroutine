@@ -154,6 +154,11 @@ impl EventLoops {
             )
     }
 
+    /// Cancel a task from event-loop.
+    pub fn cancel_task(name: &str) {
+        EventLoop::cancel_task(name);
+    }
+
     /// Submit a new coroutine to event-loop.
     ///
     /// Allow multiple threads to concurrently submit coroutine to the pool,
