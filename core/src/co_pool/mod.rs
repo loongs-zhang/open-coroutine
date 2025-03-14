@@ -8,6 +8,8 @@ use crate::coroutine::suspender::Suspender;
 use crate::scheduler::{SchedulableCoroutine, Scheduler};
 use crate::{error, impl_current_for, impl_display_by_debug, impl_for_named, trace};
 use dashmap::{DashMap, DashSet};
+use nix::sys::pthread::{pthread_kill, Pthread};
+use nix::sys::signal::Signal;
 use once_cell::sync::Lazy;
 use std::cell::Cell;
 use std::ffi::c_longlong;
@@ -25,6 +27,8 @@ mod state;
 
 /// Creator for coroutine pool.
 mod creator;
+
+static RUNNING_TASKS: Lazy<DashMap<&str, Pthread>> = Lazy::new(DashMap::new);
 
 static CANCEL_TASKS: Lazy<DashSet<&str>> = Lazy::new(DashSet::new);
 
@@ -386,12 +390,14 @@ impl<'p> CoroutinePool<'p> {
 
     fn try_run(&self) -> Option<()> {
         self.task_queue.pop().map(|task| {
-            let task_name = task.get_name();
-            if CANCEL_TASKS.contains(task_name) {
-                _ = CANCEL_TASKS.remove(task_name);
+            let tname = task.get_name().to_string().leak();
+            if CANCEL_TASKS.contains(tname) {
+                _ = CANCEL_TASKS.remove(tname);
                 return;
             }
+            _ = RUNNING_TASKS.insert(tname, nix::sys::pthread::pthread_self());
             let (task_name, result) = task.run();
+            _ = RUNNING_TASKS.remove(tname);
             let n = task_name.clone().leak();
             if self.no_waits.contains(n) {
                 _ = self.no_waits.remove(n);
@@ -416,8 +422,16 @@ impl<'p> CoroutinePool<'p> {
 
     /// Cancel a task.
     pub fn cancel_task(name: &str) {
-        // todo 发送信号，在运行时取消任务
-        _ = CANCEL_TASKS.insert(Box::leak(Box::from(name)));
+        // 1.检查正在运行的任务是否是要取消的任务
+        if let Some(pthread) = RUNNING_TASKS.get(name) {
+            // 发送SIGVTALRM信号，在运行时取消任务
+            if pthread_kill(*pthread, Signal::SIGVTALRM).is_err() {
+                error!("Attempt to cancel task for thread:{} failed !", *pthread);
+            }
+        } else {
+            // 2.添加到待取消队列
+            _ = CANCEL_TASKS.insert(Box::leak(Box::from(name)));
+        }
     }
 
     /// Schedule the tasks.

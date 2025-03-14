@@ -303,6 +303,7 @@ impl<'s> Scheduler<'s> {
                             self.ready.push(coroutine);
                         }
                     }
+                    CoroutineState::Cancelled => {}
                     CoroutineState::Complete(result) => {
                         let co_name = Box::leak(Box::from(coroutine.name()));
                         assert!(
